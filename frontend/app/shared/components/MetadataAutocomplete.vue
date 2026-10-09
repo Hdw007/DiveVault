@@ -103,7 +103,9 @@ export default {
       if (this.isOpen) {
         this.ensureHighlight();
         this.$nextTick(() => {
-          this.$refs.input?.focus();
+          const el = this.$refs.input?.$el || this.$refs.input;
+          const input = typeof el?.querySelector === "function" ? el.querySelector("input") : el;
+          input?.focus?.();
         });
       }
     },
@@ -169,9 +171,6 @@ export default {
       this.$emit("update:modelValue", name);
       this.isOpen = false;
       this.highlightedIndex = -1;
-      this.$nextTick(() => {
-        this.$refs.input?.focus();
-      });
     }
   }
 };

@@ -2,8 +2,8 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import path from "node:path";
 
-const port = Number(process.env.PORT || process.argv[2] || 4173);
-const idleTimeoutMs = Number(process.env.IDLE_TIMEOUT_MS || process.argv[3] || 15000);
+const port = Number(process.argv[2] || process.env.PORT || 4173);
+const idleTimeoutMs = Number(process.argv[3] || process.env.IDLE_TIMEOUT_MS || 15000);
 const distDir = path.resolve(process.cwd(), "dist");
 let idleTimer = null;
 

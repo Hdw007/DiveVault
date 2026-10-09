@@ -205,6 +205,23 @@ test("creates a manual dive entry outside the importer workflow", async ({ page 
   await expect(page.locator("body")).toContainText("1 Imported");
 });
 
+test("selects a saved dive site from autocomplete and closes the dropdown menu", async ({ page }) => {
+  await installAppMocks(page);
+  await gotoAndWait(page, "/logs/create");
+
+  await expect(page.getByRole("heading", { name: "Manual Dive Entry" })).toBeVisible();
+
+  const siteInput = page.getByPlaceholder("House Reef");
+  await siteInput.click();
+
+  const option = page.locator(".metadata-autocomplete-option", { hasText: "Blue Hole" });
+  await expect(option).toBeVisible();
+  await option.click();
+
+  await expect(page.locator(".metadata-autocomplete-menu")).toBeHidden();
+  await expect(siteInput).toHaveValue("Blue Hole");
+});
+
 test("covers settings profile loading and public sharing updates", async ({ page }) => {
   await installAppMocks(page);
   await gotoAndWait(page, "/#settings/diver-details");
