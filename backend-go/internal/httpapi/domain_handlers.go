@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
-	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +15,7 @@ import (
 	"github.com/jlemmings/divevault/backend-go/internal/exports"
 	"github.com/jlemmings/divevault/backend-go/internal/geocode"
 	"github.com/jlemmings/divevault/backend-go/internal/importers"
+	"github.com/jlemmings/divevault/backend-go/internal/store"
 )
 
 func handleDeviceStateGet(ctx *Context) {
@@ -70,7 +71,18 @@ func handleDivesGet(ctx *Context) {
 		writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusServiceUnavailable, map[string]string{"error": "Database unavailable: " + err.Error()})
 		return
 	}
-	writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusOK, map[string]any{"dives": dives, "stats": summarizeDives(dives), "imported_count": 0, "limit": limit, "offset": offset, "total": total})
+	completeDives := make([]store.Dive, 0, len(dives))
+	for _, dive := range dives {
+		if isLogbookComplete(dive) {
+			completeDives = append(completeDives, dive)
+		}
+	}
+	importedCount := len(dives) - len(completeDives)
+	targetDives := completeDives
+	if len(completeDives) == 0 && len(dives) > 0 {
+		targetDives = dives
+	}
+	writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusOK, map[string]any{"dives": dives, "stats": summarizeDives(targetDives), "imported_count": importedCount, "limit": limit, "offset": offset, "total": total})
 }
 
 func handleDiveGet(ctx *Context) {
@@ -200,7 +212,17 @@ func handlePublicProfileGet(ctx *Context) {
 		writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusNotFound, map[string]string{"error": "Public dive profile not found"})
 		return
 	}
-	writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusOK, map[string]any{"diver": profile, "dives": dives, "stats": summarizeDives(dives)})
+	completeDives := make([]store.Dive, 0, len(dives))
+	for _, dive := range dives {
+		if isLogbookComplete(dive) {
+			completeDives = append(completeDives, dive)
+		}
+	}
+	targetDives := completeDives
+	if len(completeDives) == 0 && len(dives) > 0 {
+		targetDives = dives
+	}
+	writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusOK, map[string]any{"diver": profile, "dives": targetDives, "stats": summarizeDives(targetDives)})
 }
 
 func handleProfileLicenseGet(ctx *Context) {
@@ -667,12 +689,204 @@ func stringAny(value any) string {
 	return ""
 }
 
-func summarizeDives(dives any) map[string]any {
-	value := reflect.ValueOf(dives)
-	if value.IsValid() && value.Kind() == reflect.Slice {
-		return map[string]any{"totalDives": value.Len()}
+func toFloat64(value any) *float64 {
+	if value == nil {
+		return nil
 	}
-	return map[string]any{"totalDives": 0}
+	switch v := value.(type) {
+	case float64:
+		return &v
+	case *float64:
+		return v
+	case float32:
+		f := float64(v)
+		return &f
+	case int:
+		f := float64(v)
+		return &f
+	case int64:
+		f := float64(v)
+		return &f
+	case *int64:
+		if v != nil {
+			f := float64(*v)
+			return &f
+		}
+	case int32:
+		f := float64(v)
+		return &f
+	case json.Number:
+		if f, err := v.Float64(); err == nil {
+			return &f
+		}
+	case string:
+		if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+			return &f
+		}
+	}
+	return nil
+}
+
+func isLogbookComplete(dive store.Dive) bool {
+	fields := dive.Fields
+	if fields == nil && dive.ImportPayload != nil {
+		if f, ok := dive.ImportPayload["fields"].(map[string]any); ok {
+			fields = f
+		}
+	}
+	if fields == nil {
+		return false
+	}
+	logbook, ok := fields["logbook"].(map[string]any)
+	if !ok {
+		return false
+	}
+	status, _ := logbook["status"].(string)
+	return status == "complete"
+}
+
+func tankPressure(tank map[string]any) (*float64, *float64) {
+	var begin, end *float64
+	if val, exists := tank["beginpressure_bar"]; exists {
+		begin = toFloat64(val)
+	} else if val, exists := tank["begin_pressure_bar"]; exists {
+		begin = toFloat64(val)
+	}
+	if val, exists := tank["endpressure_bar"]; exists {
+		end = toFloat64(val)
+	} else if val, exists := tank["end_pressure_bar"]; exists {
+		end = toFloat64(val)
+	}
+	return begin, end
+}
+
+func divePressureRange(dive store.Dive) (*float64, *float64) {
+	fields := dive.Fields
+	if fields == nil && dive.ImportPayload != nil {
+		if f, ok := dive.ImportPayload["fields"].(map[string]any); ok {
+			fields = f
+		}
+	}
+	if fields != nil {
+		switch tanks := fields["tanks"].(type) {
+		case []any:
+			if len(tanks) > 0 {
+				if tank, ok := tanks[0].(map[string]any); ok {
+					begin, end := tankPressure(tank)
+					if begin != nil && end != nil {
+						return begin, end
+					}
+				}
+			}
+		case []map[string]any:
+			if len(tanks) > 0 {
+				begin, end := tankPressure(tanks[0])
+				if begin != nil && end != nil {
+					return begin, end
+				}
+			}
+		}
+	}
+
+	var pressures []float64
+	for _, s := range dive.Samples {
+		sample, ok := s.(map[string]any)
+		if !ok {
+			continue
+		}
+		rawPressure, exists := sample["tank_pressure_bar"]
+		if !exists || rawPressure == nil {
+			continue
+		}
+		if num := toFloat64(rawPressure); num != nil {
+			pressures = append(pressures, *num)
+			continue
+		}
+		if pMap, ok := rawPressure.(map[string]any); ok {
+			for _, val := range pMap {
+				if num := toFloat64(val); num != nil {
+					pressures = append(pressures, *num)
+					break
+				}
+			}
+		}
+	}
+	if len(pressures) == 0 {
+		return nil, nil
+	}
+	maxP := pressures[0]
+	minP := pressures[0]
+	for _, p := range pressures[1:] {
+		if p > maxP {
+			maxP = p
+		}
+		if p < minP {
+			minP = p
+		}
+	}
+	return &maxP, &minP
+}
+
+func summarizeDives(dives []store.Dive) map[string]any {
+	totalDives := len(dives)
+	var totalSeconds int64
+	var maxDepth float64
+	var sumDepth float64
+	var totalBarConsumed float64
+
+	for _, dive := range dives {
+		var sec int64
+		if dive.DurationSeconds != nil {
+			sec = *dive.DurationSeconds
+		} else if dive.DurationMS != nil {
+			sec = *dive.DurationMS / 1000
+		}
+		if sec > 0 {
+			totalSeconds += sec
+		}
+
+		var depth float64
+		if dive.MaxDepthM != nil {
+			depth = *dive.MaxDepthM
+		}
+		if depth > maxDepth {
+			maxDepth = depth
+		}
+		sumDepth += depth
+
+		begin, end := divePressureRange(dive)
+		if begin != nil && end != nil {
+			consumed := math.Round(*begin - *end)
+			if consumed > 0 {
+				totalBarConsumed += consumed
+			}
+		}
+	}
+
+	var averageDurationSeconds float64
+	var averageMaxDepth float64
+	if totalDives > 0 {
+		averageDurationSeconds = math.Round((float64(totalSeconds)/float64(totalDives))*100) / 100
+		averageMaxDepth = math.Round((sumDepth/float64(totalDives))*100) / 100
+	}
+
+	var totalHours float64
+	if totalSeconds > 0 {
+		totalHours = math.Round((float64(totalSeconds)/3600.0)*10) / 10
+	}
+
+	bottomTimeProgress := int(math.Min(100, math.Round(totalHours)))
+
+	return map[string]any{
+		"totalDives":             totalDives,
+		"totalSeconds":           totalSeconds,
+		"totalHours":             totalHours,
+		"maxDepth":               maxDepth,
+		"totalBarConsumed":       int(totalBarConsumed),
+		"averageDurationSeconds": averageDurationSeconds,
+		"averageMaxDepth":        averageMaxDepth,
+		"bottomTimeProgress":     bottomTimeProgress,
+	}
 }
 
 func markDuplicateRows(ctx *Context, rows []map[string]any) {

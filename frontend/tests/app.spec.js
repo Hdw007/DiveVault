@@ -99,6 +99,23 @@ test("covers dashboard, logs, dive detail, and logbook editing", async ({ page }
   await expect(page.getByText("metadata updated.")).toBeVisible();
 });
 
+test("computes dashboard stats fallback when api stats totals are omitted", async ({ page }) => {
+  await installAppMocks(page, {
+    data: {
+      stats: { totalDives: 2 }
+    }
+  });
+  await gotoAndWait(page);
+
+  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+  const bottomTimeCard = page.locator("article", { hasText: "Bottom Time" });
+  await expect(bottomTimeCard).toBeVisible();
+  await expect(bottomTimeCard).toContainText("0h");
+  await expect(bottomTimeCard).toContainText("53min");
+  const maxDepthCard = page.locator("article", { hasText: "Max Depth" });
+  await expect(maxDepthCard).toContainText("24.8 m");
+});
+
 test("navigates between desktop sidebar sections from logs", async ({ page }) => {
   await installAppMocks(page);
   await gotoAndWait(page, "/logs");

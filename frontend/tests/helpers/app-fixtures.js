@@ -398,7 +398,9 @@ async function installAppMocks(page, options = {}) {
   data.profile = clone(options.data?.profile || data.profile);
   data.equipment = clone(options.data?.equipment || data.equipment || []);
   data.stats = clone(options.data?.stats || data.stats);
-  refreshStats(data);
+  if (!options.data?.stats) {
+    refreshStats(data);
+  }
   refreshEquipmentService(data);
 
   await setupTestState(page, {

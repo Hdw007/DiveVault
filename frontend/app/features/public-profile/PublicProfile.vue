@@ -7,7 +7,6 @@ import {
   formatDate,
   formatDepth,
   durationShort,
-  numberOrZero,
   parseDate,
   paddedDiveIndex
 } from "~/shared/utils/core.js";
@@ -95,10 +94,18 @@ export default {
       return buildDiveSequenceMap(this.dives);
     },
     totalHoursLabel() {
-      return `${numberOrZero(this.stats?.totalHours).toFixed(1)}h`;
+      if (typeof this.stats?.totalHours === "number" && this.stats.totalHours > 0) {
+        return `${this.stats.totalHours.toFixed(1)}h`;
+      }
+      const totalSeconds = this.dives.reduce((sum, dive) => sum + (Number(dive.duration_seconds) || 0), 0);
+      return totalSeconds ? `${(totalSeconds / 3600).toFixed(1)}h` : "0.0h";
     },
     maxDepthLabel() {
-      return formatDepth(this.stats?.maxDepth);
+      if (typeof this.stats?.maxDepth === "number" && this.stats.maxDepth > 0) {
+        return formatDepth(this.stats.maxDepth);
+      }
+      const max = Math.max(0, ...this.dives.map((dive) => Number(dive.max_depth_m) || 0));
+      return formatDepth(max);
     }
   },
   watch: {
