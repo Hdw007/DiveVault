@@ -44,7 +44,8 @@
 ## Fork Maintenance & Target Deployment
 - **Surgical Changes & Upstream Alignment**: Keep all modifications as minimal and functional as possible to resolve issues while minimizing drift from upstream. Preserve existing contracts (`contracts/api-routes.json`) and architecture patterns.
 - **PR-Ready Topic Branches**: Where possible, implement fixes and features as self-contained units on dedicated topic branches (`fix/...`, `feat/...`) branched from clean upstream code, ready for individual pull requests. Do not include fork-specific deployment settings in PR commits.
-- **Clean Upstream Sync**: Keep the tracking branch (`master`) clean and identical to `upstream/master`. Merge verified topic branches into the local deployment branch (e.g. `unraid`).
+- **Clean Upstream Sync**: Keep the tracking branch (`master`) clean and identical to `upstream/master`.
+- **User Verification Before Merge**: Never merge topic branches into `unraid` automatically. Keep the topic branch active for the user to test and review, and only merge into the local deployment branch (`unraid`) after explicit confirmation.
 - **Target Deployment**: Docker Compose on Unraid behind NPMplus (Nginx Proxy Manager Plus), supervised by CrowdSec with AppSec.
 - **Proxy & AppSec Compatibility**:
   - Respect reverse proxy headers (`X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host`) for real client IP detection, cookie security (`Secure`, `SameSite`), and base URLs.
