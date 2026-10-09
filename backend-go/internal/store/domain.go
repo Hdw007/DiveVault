@@ -451,13 +451,185 @@ func (db *DB) ListDeviceStates(ctx context.Context, userID string) ([]DeviceStat
 	return states, rows.Err()
 }
 
+func (db *DB) countCommittedDives(ctx context.Context, userID string) (int, error) {
+	var count int
+	err := db.pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM dives
+		WHERE user_id=$1 AND fields_json->'logbook'->>'status' = 'complete'
+	`, cleanText(userID)).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func parseISODate(value any) *time.Time {
+	str := cleanText(stringValue(value))
+	if str == "" {
+		return nil
+	}
+	if len(str) >= 10 {
+		datePart := str[:10]
+		if t, err := time.Parse("2006-01-02", datePart); err == nil {
+			utc := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+			return &utc
+		}
+	}
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05",
+		"2006-01-02",
+	} {
+		if t, err := time.Parse(layout, str); err == nil {
+			utc := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+			return &utc
+		}
+	}
+	return nil
+}
+
+func addMonths(sourceDate time.Time, months int) time.Time {
+	totalMonths := int(sourceDate.Month()) - 1 + months
+	year := sourceDate.Year() + totalMonths/12
+	monthIndex := totalMonths % 12
+	if monthIndex < 0 {
+		monthIndex += 12
+		year--
+	}
+	month := time.Month(monthIndex + 1)
+	maxDays := time.Date(year, month+1, 0, 0, 0, 0, 0, time.UTC).Day()
+	day := sourceDate.Day()
+	if day > maxDays {
+		day = maxDays
+	}
+	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+}
+
+func equipmentServiceStatusForDive(item map[string]any, diveStartedAt any) map[string]any {
+	diveDate := parseISODate(diveStartedAt)
+	lastServiceVal := item["last_service_date"]
+	if stringValue(lastServiceVal) == "" {
+		lastServiceVal = item["last_serviced_at"]
+	}
+	lastServiceDate := parseISODate(lastServiceVal)
+	interval := intValue(item["service_interval_months"])
+
+	if diveDate == nil {
+		return map[string]any{
+			"service_status":  "unknown",
+			"service_due_date": "",
+			"service_message":  "Dive date is unavailable.",
+		}
+	}
+	if lastServiceDate == nil || interval <= 0 {
+		return map[string]any{
+			"service_status":  "unknown",
+			"service_due_date": "",
+			"service_message":  "Service date or interval is missing.",
+		}
+	}
+
+	serviceDueDate := addMonths(*lastServiceDate, interval)
+	serviceDueDateStr := serviceDueDate.Format("2006-01-02")
+
+	if lastServiceDate.After(*diveDate) {
+		return map[string]any{
+			"service_status":  "unknown",
+			"service_due_date": serviceDueDateStr,
+			"service_message":  "Latest service date is after this dive.",
+		}
+	}
+	if diveDate.After(serviceDueDate) {
+		return map[string]any{
+			"service_status":  "overdue",
+			"service_due_date": serviceDueDateStr,
+			"service_message":  "Service was overdue for this dive.",
+		}
+	}
+	dueSoonThreshold := addMonths(*diveDate, 1)
+	status := "serviced"
+	if !serviceDueDate.After(dueSoonThreshold) {
+		status = "due_soon"
+	}
+	return map[string]any{
+		"service_status":  status,
+		"service_due_date": serviceDueDateStr,
+		"service_message":  "",
+	}
+}
+
+func equipmentServiceSummary(item map[string]any, committedDiveCount int, serviceDueDate string) map[string]any {
+	var maxDivesVal any
+	var hasMaxDives bool
+	if md := nullableInt64(item["max_dives_before_service"]); md != nil && *md > 0 {
+		maxDivesVal = int(*md)
+		hasMaxDives = true
+	}
+
+	baseline := intValue(item["last_service_dive_count"])
+	isStandard := boolOrExisting(item["is_default"], boolOrExisting(item["is_standard"], false))
+	divesSinceService := 0
+	if isStandard {
+		divesSinceService = committedDiveCount - baseline
+		if divesSinceService < 0 {
+			divesSinceService = 0
+		}
+	}
+
+	var divesRemaining any
+	diveDue := false
+	if hasMaxDives {
+		maxD := maxDivesVal.(int)
+		rem := maxD - divesSinceService
+		if rem < 0 {
+			rem = 0
+		}
+		divesRemaining = rem
+		diveDue = divesSinceService >= maxD
+	}
+
+	dateDue := false
+	dueDateStr := cleanText(stringValue(item["next_service_due"]))
+	if dueDateStr == "" {
+		dueDateStr = serviceDueDate
+	}
+	if dueDateStr != "" {
+		if dt := parseISODate(dueDateStr); dt != nil {
+			today := time.Now().UTC()
+			todayDate := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
+			dateDue = !dt.After(todayDate)
+		}
+	}
+
+	serviceDueReason := ""
+	if diveDue {
+		serviceDueReason = "dives"
+	} else if dateDue {
+		serviceDueReason = "date"
+	}
+
+	return map[string]any{
+		"dives_since_service":             divesSinceService,
+		"dives_remaining_before_service": divesRemaining,
+		"service_due":                    diveDue || dateDue,
+		"service_due_reason":             serviceDueReason,
+	}
+}
+
 func (db *DB) ListEquipment(ctx context.Context, userID string) ([]map[string]any, error) {
+	committedDives, err := db.countCommittedDives(ctx, userID)
+	if err != nil {
+		committedDives = 0
+	}
 	rows, err := db.pool.Query(ctx, "SELECT row_to_json(t) FROM (SELECT * FROM user_equipment WHERE user_id=$1 ORDER BY name, equipment_id) t", cleanText(userID))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	items := []map[string]any{}
+	now := time.Now().UTC().Format(time.RFC3339)
 	for rows.Next() {
 		var body []byte
 		if err := rows.Scan(&body); err != nil {
@@ -465,6 +637,18 @@ func (db *DB) ListEquipment(ctx context.Context, userID string) ([]map[string]an
 		}
 		item := decodeMap(body)
 		item["id"] = item["equipment_id"]
+		serviceStatus := equipmentServiceStatusForDive(item, now)
+		for k, v := range serviceStatus {
+			item[k] = v
+		}
+		serviceDueDate := stringValue(serviceStatus["service_due_date"])
+		if stringValue(item["next_service_due"]) == "" && serviceDueDate != "" {
+			item["next_service_due"] = serviceDueDate
+		}
+		serviceSummary := equipmentServiceSummary(item, committedDives, serviceDueDate)
+		for k, v := range serviceSummary {
+			item[k] = v
+		}
 		items = append(items, item)
 	}
 	return items, rows.Err()
@@ -485,10 +669,18 @@ func (db *DB) SaveEquipment(ctx context.Context, userID string, entries []any) (
 		if id == "" {
 			id = "equipment_" + time.Now().UTC().Format("20060102150405.000000000")
 		}
+		nextServiceDue := stringValue(item["next_service_due"])
+		lastServiceDate := stringValue(item["last_service_date"])
+		intervalMonths := nullableInt64(item["service_interval_months"])
+		if nextServiceDue == "" && lastServiceDate != "" && intervalMonths != nil && *intervalMonths > 0 {
+			if lsd := parseISODate(lastServiceDate); lsd != nil {
+				nextServiceDue = addMonths(*lsd, int(*intervalMonths)).Format("2006-01-02")
+			}
+		}
 		_, err := tx.Exec(ctx, `
             INSERT INTO user_equipment(user_id, equipment_id, name, category, icon, type, year_bought, vendor, brand, model, serial, warranty, next_service_due, service_interval_months, last_service_date, max_dives_before_service, track_service, service_tag, is_default, is_standard, last_serviced_at, last_service_dive_count, updated_at)
             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
-        `, cleanText(userID), id, stringValue(item["name"]), stringValue(item["category"]), stringValue(item["icon"]), stringValue(item["type"]), nullableInt64(item["year_bought"]), stringValue(item["vendor"]), stringValue(item["brand"]), stringValue(item["model"]), stringValue(item["serial"]), stringValue(item["warranty"]), stringValue(item["next_service_due"]), nullableInt64(item["service_interval_months"]), stringValue(item["last_service_date"]), nullableInt64(item["max_dives_before_service"]), boolOrExisting(item["track_service"], true), stringValue(item["service_tag"]), boolOrExisting(item["is_default"], false), boolOrExisting(item["is_standard"], false), nullableString(item["last_serviced_at"]), intValue(item["last_service_dive_count"]), nowISO())
+        `, cleanText(userID), id, stringValue(item["name"]), stringValue(item["category"]), stringValue(item["icon"]), stringValue(item["type"]), nullableInt64(item["year_bought"]), stringValue(item["vendor"]), stringValue(item["brand"]), stringValue(item["model"]), stringValue(item["serial"]), stringValue(item["warranty"]), nextServiceDue, intervalMonths, lastServiceDate, nullableInt64(item["max_dives_before_service"]), boolOrExisting(item["track_service"], true), stringValue(item["service_tag"]), boolOrExisting(item["is_default"], false), boolOrExisting(item["is_standard"], false), nullableString(item["last_serviced_at"]), intValue(item["last_service_dive_count"]), nowISO())
 		if err != nil {
 			return nil, err
 		}
@@ -500,10 +692,28 @@ func (db *DB) SaveEquipment(ctx context.Context, userID string, entries []any) (
 }
 
 func (db *DB) MarkEquipmentServiced(ctx context.Context, userID string, equipmentID string) (map[string]any, error) {
+	now := nowISO()
+	servicedDate := now
+	if len(now) >= 10 {
+		servicedDate = now[:10]
+	}
+	diveCount, _ := db.countCommittedDives(ctx, userID)
+
+	var intervalMonths *int64
+	_ = db.pool.QueryRow(ctx, "SELECT service_interval_months FROM user_equipment WHERE user_id=$1 AND equipment_id=$2", cleanText(userID), cleanText(equipmentID)).Scan(&intervalMonths)
+
+	nextServiceDue := ""
+	if intervalMonths != nil && *intervalMonths > 0 {
+		if sd := parseISODate(servicedDate); sd != nil {
+			nextServiceDue = addMonths(*sd, int(*intervalMonths)).Format("2006-01-02")
+		}
+	}
+
 	tag, err := db.pool.Exec(ctx, `
-        UPDATE user_equipment SET last_serviced_at=$1, last_service_dive_count=0, updated_at=$1
-        WHERE user_id=$2 AND equipment_id=$3
-    `, nowISO(), cleanText(userID), cleanText(equipmentID))
+        UPDATE user_equipment
+        SET last_serviced_at=$1, last_service_date=$2, last_service_dive_count=$3, next_service_due=CASE WHEN $4 <> '' THEN $4 ELSE next_service_due END, updated_at=$1
+        WHERE user_id=$5 AND equipment_id=$6
+    `, now, servicedDate, diveCount, nextServiceDue, cleanText(userID), cleanText(equipmentID))
 	if err != nil || tag.RowsAffected() == 0 {
 		return nil, err
 	}

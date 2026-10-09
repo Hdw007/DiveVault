@@ -287,18 +287,60 @@ function createDiveFromPayload(data, payload) {
   return clone(dive);
 }
 
+function calculateDueDate(lastServiceDate, intervalMonths) {
+  if (!lastServiceDate || !intervalMonths) return "";
+  const match = String(lastServiceDate).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return "";
+  const year = Number.parseInt(match[1], 10);
+  const month = Number.parseInt(match[2], 10);
+  const day = Number.parseInt(match[3], 10);
+  const months = Number.parseInt(intervalMonths, 10);
+  if (!Number.isFinite(months) || months <= 0) return "";
+  const totalMonths = month - 1 + months;
+  const targetYear = year + Math.floor(totalMonths / 12);
+  const targetMonth = (totalMonths % 12) + 1;
+  const daysInTargetMonth = new Date(Date.UTC(targetYear, targetMonth, 0)).getUTCDate();
+  const targetDay = Math.min(day, daysInTargetMonth);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${targetYear}-${pad(targetMonth)}-${pad(targetDay)}`;
+}
+
 function refreshEquipmentService(data) {
   const committedDives = data.dives.filter(isCommittedDive).length;
+  const today = new Date();
+  const todayTime = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
   data.equipment = (data.equipment || []).map((item) => {
     const maxDives = Number.isFinite(Number(item.max_dives_before_service)) ? Number(item.max_dives_before_service) : null;
     const divesSinceService = item.is_standard ? Math.max(committedDives - Number(item.last_service_dive_count || 0), 0) : 0;
     const diveDue = maxDives !== null && divesSinceService >= maxDives;
+
+    const lastServiceDate = item.last_service_date || item.last_serviced_at?.slice?.(0, 10) || "";
+    const intervalMonths = item.service_interval_months;
+    const computedDueDate = calculateDueDate(lastServiceDate, intervalMonths);
+    const dueDate = item.next_service_due || item.service_due_date || computedDueDate;
+
+    let dateDue = false;
+    let serviceStatus = "unknown";
+    if (dueDate) {
+      const dueTime = Date.parse(`${dueDate}T00:00:00`);
+      if (Number.isFinite(dueTime)) {
+        const days = Math.ceil((dueTime - todayTime) / 86400000);
+        dateDue = days <= 0;
+        serviceStatus = days < 0 ? "overdue" : days <= 30 ? "due_soon" : "serviced";
+      }
+    }
+
+    const serviceDue = diveDue || dateDue;
+    const serviceDueReason = diveDue ? "dives" : dateDue ? "date" : "";
+
     return {
       ...item,
+      service_due_date: dueDate || "",
+      service_status: item.service_status || serviceStatus,
       dives_since_service: divesSinceService,
       dives_remaining_before_service: maxDives === null ? null : Math.max(maxDives - divesSinceService, 0),
-      service_due: diveDue,
-      service_due_reason: diveDue ? "dives" : ""
+      service_due: serviceDue,
+      service_due_reason: serviceDueReason
     };
   });
 }
@@ -633,11 +675,16 @@ async function installAppMocks(page, options = {}) {
         return;
       }
       const committedDives = data.dives.filter(isCommittedDive).length;
+      const todayIso = "2026-04-07";
       data.equipment[index] = {
         ...data.equipment[index],
         last_serviced_at: "2026-04-07T12:00:00Z",
+        last_service_date: todayIso,
         last_service_dive_count: committedDives
       };
+      if (data.equipment[index].service_interval_months) {
+        data.equipment[index].next_service_due = calculateDueDate(todayIso, data.equipment[index].service_interval_months);
+      }
       refreshEquipmentService(data);
       await fulfillJson(route, { equipment: clone(data.equipment[index]) });
       return;
