@@ -40,3 +40,13 @@
 - `STARTUP_MIGRATIONS=enabled` is the default for single-instance/local backend startup. Set `STARTUP_MIGRATIONS=disabled` when migrations run externally, such as the Kubernetes Job in `examples/kubernetes/divevault.yaml`.
 - The backend Docker image is built from `backend/Dockerfile`; it builds frontend assets with Node, compiles the Go backend, and runs without Python in the final image.
 - CI publishes image/release version tags from `frontend/package.json` `version`, not from a backend manifest.
+
+## Fork Maintenance & Target Deployment
+- **Surgical Changes & Upstream Alignment**: Keep all modifications as minimal and functional as possible to resolve issues while minimizing drift from upstream. Preserve existing contracts (`contracts/api-routes.json`) and architecture patterns.
+- **PR-Ready Topic Branches**: Where possible, implement fixes and features as self-contained units on dedicated topic branches (`fix/...`, `feat/...`) branched from clean upstream code, ready for individual pull requests. Do not include fork-specific deployment settings in PR commits.
+- **Clean Upstream Sync**: Keep the tracking branch (`master`) clean and identical to `upstream/master`. Merge verified topic branches into the local deployment branch (e.g. `unraid`).
+- **Target Deployment**: Docker Compose on Unraid behind NPMplus (Nginx Proxy Manager Plus), supervised by CrowdSec with AppSec.
+- **Proxy & AppSec Compatibility**:
+  - Respect reverse proxy headers (`X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host`) for real client IP detection, cookie security (`Secure`, `SameSite`), and base URLs.
+  - Keep HTTP contracts, payload structures, headers, and status codes standard and predictable to prevent false positives in CrowdSec AppSec / WAF inspections.
+
