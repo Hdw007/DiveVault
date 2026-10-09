@@ -43,6 +43,31 @@ test("renders login flows with the local auth screen", async ({ page }, testInfo
   await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
 });
 
+test("maintains high contrast input font on auth screen under light and dark theme", async ({ page }) => {
+  await installAppMocks(page, {
+    signedIn: false,
+    authStatus: {
+      initialized: false,
+      bootstrap_registration_open: true,
+      public_registration_enabled: false,
+      public_registration_open: true
+    }
+  });
+  await gotoAndWait(page);
+
+  const emailInput = page.getByPlaceholder("Email");
+
+  await page.evaluate(() => {
+    document.documentElement.dataset.theme = "light";
+  });
+  expect(await emailInput.evaluate((el) => window.getComputedStyle(el).color)).toBe("rgb(240, 246, 252)");
+
+  await page.evaluate(() => {
+    document.documentElement.dataset.theme = "dark";
+  });
+  expect(await emailInput.evaluate((el) => window.getComputedStyle(el).color)).toBe("rgb(240, 246, 252)");
+});
+
 test("hides the public account prompt when registration is closed", async ({ page }) => {
   await installAppMocks(page, {
     signedIn: false,
