@@ -40,33 +40,88 @@ function emptyEquipment() {
   };
 }
 
+function calculateDueDate(lastServiceDate, intervalMonths) {
+  if (!lastServiceDate || !intervalMonths) return "";
+  const match = String(lastServiceDate).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return "";
+  const year = Number.parseInt(match[1], 10);
+  const month = Number.parseInt(match[2], 10);
+  const day = Number.parseInt(match[3], 10);
+  const months = Number.parseInt(intervalMonths, 10);
+  if (!Number.isFinite(months) || months <= 0) return "";
+  const totalMonths = month - 1 + months;
+  const targetYear = year + Math.floor(totalMonths / 12);
+  const targetMonth = (totalMonths % 12) + 1;
+  const daysInTargetMonth = new Date(Date.UTC(targetYear, targetMonth, 0)).getUTCDate();
+  const targetDay = Math.min(day, daysInTargetMonth);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${targetYear}-${pad(targetMonth)}-${pad(targetDay)}`;
+}
+
+function daysUntilDate(dateString) {
+  if (!dateString) return null;
+  const dueTime = Date.parse(`${dateString}T00:00:00`);
+  if (!Number.isFinite(dueTime)) return null;
+  const today = new Date();
+  const todayTime = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+  return Math.ceil((dueTime - todayTime) / 86400000);
+}
+
 function normalizeEquipment(items) {
   if (!Array.isArray(items)) return [];
-  return items.map((item, index) => ({
-    id: item?.id || `equipment-${index + 1}`,
-    name: item?.name || [item?.brand, item?.vendor, item?.model, item?.category || item?.type].filter(Boolean).join(" "),
-    category: item?.category || item?.type || "",
-    icon: item?.icon || "scuba_diving",
-    year_bought: item?.year_bought ? String(item.year_bought) : "",
-    vendor: item?.vendor || "",
-    brand: item?.brand || "",
-    model: item?.model || "",
-    serial: item?.serial || "",
-    warranty: item?.warranty || "",
-    next_service_due: item?.next_service_due || "",
-    max_dives_before_service: item?.max_dives_before_service ? String(item.max_dives_before_service) : "",
-    track_service: item?.track_service !== false,
-    service_tag: item?.service_tag || "",
-    service_interval_months: item?.service_interval_months ? String(item.service_interval_months) : "",
-    last_service_date: item?.last_service_date || item?.last_serviced_at?.slice?.(0, 10) || "",
-    is_default: Boolean(item?.is_default || item?.is_standard),
-    service_status: item?.service_status || "unknown",
-    service_due_date: item?.service_due_date || "",
-    dives_remaining_before_service: item?.dives_remaining_before_service
-  }));
+  return items.map((item, index) => {
+    const lastServiceDate = item?.last_service_date || item?.last_serviced_at?.slice?.(0, 10) || "";
+    const intervalMonths = item?.service_interval_months ? String(item.service_interval_months) : "";
+    const computedDueDate = calculateDueDate(lastServiceDate, intervalMonths);
+    const serviceDueDate = item?.service_due_date || item?.next_service_due || computedDueDate;
+    const nextServiceDue = item?.next_service_due || computedDueDate;
+
+    let serviceStatus = item?.service_status;
+    if (!serviceStatus || serviceStatus === "unknown") {
+      if (serviceDueDate) {
+        const days = daysUntilDate(serviceDueDate);
+        if (days !== null) {
+          if (days < 0) {
+            serviceStatus = "overdue";
+          } else if (days <= 30) {
+            serviceStatus = "due_soon";
+          } else {
+            serviceStatus = "serviced";
+          }
+        }
+      }
+      if (!serviceStatus) {
+        serviceStatus = "unknown";
+      }
+    }
+
+    return {
+      id: item?.id || `equipment-${index + 1}`,
+      name: item?.name || [item?.brand, item?.vendor, item?.model, item?.category || item?.type].filter(Boolean).join(" "),
+      category: item?.category || item?.type || "",
+      icon: item?.icon || "scuba_diving",
+      year_bought: item?.year_bought ? String(item.year_bought) : "",
+      vendor: item?.vendor || "",
+      brand: item?.brand || "",
+      model: item?.model || "",
+      serial: item?.serial || "",
+      warranty: item?.warranty || "",
+      next_service_due: nextServiceDue,
+      max_dives_before_service: item?.max_dives_before_service ? String(item.max_dives_before_service) : "",
+      track_service: item?.track_service !== false,
+      service_tag: item?.service_tag || "",
+      service_interval_months: intervalMonths,
+      last_service_date: lastServiceDate,
+      is_default: Boolean(item?.is_default || item?.is_standard),
+      service_status: serviceStatus,
+      service_due_date: serviceDueDate,
+      dives_remaining_before_service: item?.dives_remaining_before_service
+    };
+  });
 }
 
 function equipmentPayload(item) {
+  const nextServiceDue = item.next_service_due || calculateDueDate(item.last_service_date, item.service_interval_months);
   return {
     id: item.id,
     name: item.name.trim(),
@@ -79,7 +134,7 @@ function equipmentPayload(item) {
     model: item.model.trim(),
     serial: item.serial.trim(),
     warranty: item.warranty.trim(),
-    next_service_due: item.next_service_due,
+    next_service_due: nextServiceDue,
     service_interval_months: item.service_interval_months ? Number.parseInt(item.service_interval_months, 10) : null,
     last_service_date: item.last_service_date,
     max_dives_before_service: item.max_dives_before_service ? Number.parseInt(item.max_dives_before_service, 10) : null,
@@ -96,12 +151,7 @@ function defaultMissingServiceData(item) {
 
 function daysUntilService(item) {
   const dueDate = item?.service_due_date || item?.next_service_due || "";
-  if (!dueDate) return null;
-  const dueTime = Date.parse(`${dueDate}T00:00:00`);
-  if (!Number.isFinite(dueTime)) return null;
-  const today = new Date();
-  const todayTime = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
-  return Math.ceil((dueTime - todayTime) / 86400000);
+  return daysUntilDate(dueDate);
 }
 
 function clampPercent(value) {
@@ -224,7 +274,20 @@ export default {
       await this.save();
     },
     updateItem(id, key, value) {
-      this.drafts = this.drafts.map((item) => (item.id === id ? { ...item, [key]: value } : item));
+      this.drafts = this.drafts.map((item) => {
+        if (item.id !== id) return item;
+        const updated = { ...item, [key]: value };
+        if (key === "last_service_date" || key === "service_interval_months") {
+          const computedDueDate = calculateDueDate(updated.last_service_date, updated.service_interval_months);
+          updated.service_due_date = computedDueDate;
+          updated.next_service_due = computedDueDate;
+          const days = daysUntilDate(computedDueDate);
+          if (days !== null) {
+            updated.service_status = days < 0 ? "overdue" : days <= 30 ? "due_soon" : "serviced";
+          }
+        }
+        return updated;
+      });
     },
     async save() {
       const savedEquipment = await this.saveEquipment(this.drafts.map(equipmentPayload));

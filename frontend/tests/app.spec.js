@@ -397,6 +397,25 @@ test("manages equipment inventory and service schedule", async ({ page }) => {
   ).toBeHidden();
 });
 
+test("displays overdue status for equipment past service interval", async ({ page }) => {
+  await installAppMocks(page);
+  await gotoAndWait(page, "/#equipment");
+
+  await page.getByRole("button", { name: "New Entry" }).click();
+  await expect(page.getByRole("heading", { name: "New Equipment" })).toBeVisible();
+  await page.getByRole("textbox", { name: "Category" }).fill("Regulator");
+  await page.getByRole("textbox", { name: "Brand" }).fill("Apeks");
+  await page.getByRole("textbox", { name: "Model" }).fill("XTX50");
+  await page.getByPlaceholder("YYYY-MM-DD").fill("2020-01-01");
+  await page.getByRole("button", { name: "Save Gear" }).click();
+  await expect(page.getByText("Equipment inventory saved.")).toBeVisible();
+
+  await expect(page.getByRole("heading", { name: "Apeks XTX50" }).first()).toBeVisible();
+  const overdueCard = page.locator("article").filter({ hasText: "Apeks XTX50" });
+  await expect(overdueCard.getByText(/Days Overdue/)).toBeVisible();
+  await expect(page.locator(".equipment-service-timeline").getByText(/Overdue since 2021-01-01/)).toBeVisible();
+});
+
 test("covers the public profile route", async ({ page }) => {
   await installAppMocks(page);
   await gotoAndWait(page, "/public/avery-marlow");
