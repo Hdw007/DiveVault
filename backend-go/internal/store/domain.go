@@ -132,9 +132,13 @@ func (db *DB) ListDives(ctx context.Context, userID string, includeSamples bool,
 	}
 	rows, err := db.pool.Query(ctx, `
         SELECT id, user_id, vendor, product, fingerprint_hex, dive_uid, started_at, duration_seconds, duration_ms,
-               max_depth_m, avg_depth_m, import_payload_json, fields_json, raw_sha256, raw_data, samples_json, imported_at
+               max_depth_m, avg_depth_m, import_payload_json, fields_json, raw_sha256,
+               CASE WHEN $4 THEN raw_data ELSE ''::bytea END,
+               CASE WHEN $5 THEN samples_json ELSE '[]'::jsonb END,
+               COALESCE(jsonb_array_length(samples_json), 0),
+               imported_at
         FROM dives WHERE user_id=$1 ORDER BY started_at DESC NULLS LAST, id DESC LIMIT $2 OFFSET $3
-    `, cleanText(userID), limit, offset)
+    `, cleanText(userID), limit, offset, includeRawData, includeSamples)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -146,9 +150,13 @@ func (db *DB) ListDives(ctx context.Context, userID string, includeSamples bool,
 func (db *DB) ListAllDives(ctx context.Context, userID string, includeSamples bool, includeRawData bool) ([]Dive, error) {
 	rows, err := db.pool.Query(ctx, `
         SELECT id, user_id, vendor, product, fingerprint_hex, dive_uid, started_at, duration_seconds, duration_ms,
-               max_depth_m, avg_depth_m, import_payload_json, fields_json, raw_sha256, raw_data, samples_json, imported_at
+               max_depth_m, avg_depth_m, import_payload_json, fields_json, raw_sha256,
+               CASE WHEN $2 THEN raw_data ELSE ''::bytea END,
+               CASE WHEN $3 THEN samples_json ELSE '[]'::jsonb END,
+               COALESCE(jsonb_array_length(samples_json), 0),
+               imported_at
         FROM dives WHERE user_id=$1 ORDER BY started_at DESC NULLS LAST, id DESC
-    `, cleanText(userID))
+    `, cleanText(userID), includeRawData, includeSamples)
 	if err != nil {
 		return nil, err
 	}
@@ -159,9 +167,13 @@ func (db *DB) ListAllDives(ctx context.Context, userID string, includeSamples bo
 func (db *DB) GetDive(ctx context.Context, userID string, diveID int64, includeRawData bool) (*Dive, error) {
 	rows, err := db.pool.Query(ctx, `
         SELECT id, user_id, vendor, product, fingerprint_hex, dive_uid, started_at, duration_seconds, duration_ms,
-               max_depth_m, avg_depth_m, import_payload_json, fields_json, raw_sha256, raw_data, samples_json, imported_at
+               max_depth_m, avg_depth_m, import_payload_json, fields_json, raw_sha256,
+               CASE WHEN $3 THEN raw_data ELSE ''::bytea END,
+               samples_json,
+               COALESCE(jsonb_array_length(samples_json), 0),
+               imported_at
         FROM dives WHERE user_id=$1 AND id=$2
-    `, cleanText(userID), diveID)
+    `, cleanText(userID), diveID, includeRawData)
 	if err != nil {
 		return nil, err
 	}
@@ -207,17 +219,17 @@ func scanDives(rows pgx.Rows, includeSamples bool, includeRawData bool) ([]Dive,
 		var dive Dive
 		var importJSON, fieldsJSON, samplesJSON []byte
 		var rawData []byte
-		if err := rows.Scan(&dive.ID, &dive.UserID, &dive.Vendor, &dive.Product, &dive.FingerprintHex, &dive.DiveUID, &dive.StartedAt, &dive.DurationSeconds, &dive.DurationMS, &dive.MaxDepthM, &dive.AvgDepthM, &importJSON, &fieldsJSON, &dive.RawSHA256, &rawData, &samplesJSON, &dive.ImportedAt); err != nil {
+		var sampleCount int
+		if err := rows.Scan(&dive.ID, &dive.UserID, &dive.Vendor, &dive.Product, &dive.FingerprintHex, &dive.DiveUID, &dive.StartedAt, &dive.DurationSeconds, &dive.DurationMS, &dive.MaxDepthM, &dive.AvgDepthM, &importJSON, &fieldsJSON, &dive.RawSHA256, &rawData, &samplesJSON, &sampleCount, &dive.ImportedAt); err != nil {
 			return nil, err
 		}
 		dive.ImportPayload = decodeMap(importJSON)
 		dive.Fields = decodeMap(fieldsJSON)
-		samples := decodeSlice(samplesJSON)
-		dive.SampleCount = len(samples)
+		dive.SampleCount = sampleCount
 		if includeSamples {
-			dive.Samples = samples
+			dive.Samples = decodeSlice(samplesJSON)
 		}
-		if includeRawData {
+		if includeRawData && len(rawData) > 0 {
 			dive.RawDataB64 = base64.StdEncoding.EncodeToString(rawData)
 		}
 		if dive.DurationSeconds == nil && dive.DurationMS != nil {
@@ -382,21 +394,22 @@ func (db *DB) PublicProfile(ctx context.Context, slug string) (map[string]any, [
 }
 
 func replaceProfileCollection(ctx context.Context, tx pgx.Tx, table string, idColumn string, userID string, entries []any, columns []string) error {
-	if _, err := tx.Exec(ctx, "DELETE FROM "+table+" WHERE user_id=$1", cleanText(userID)); err != nil {
-		return err
-	}
+	seenIDs := make([]string, 0, len(entries))
 	for index, entry := range entries {
 		item := mapValue(entry)
 		id := stringValue(valueOr(item["id"], item[idColumn]))
 		if id == "" {
 			id = fmt.Sprintf("%s_%d_%d", idColumn, time.Now().UnixNano(), index)
 		}
+		seenIDs = append(seenIDs, id)
 		names := []string{"user_id", idColumn}
 		args := []any{cleanText(userID), id}
 		placeholders := []string{"$1", "$2"}
+		updateClauses := make([]string, 0, len(columns))
 		for _, column := range columns {
 			names = append(names, column)
 			placeholders = append(placeholders, fmt.Sprintf("$%d", len(args)+1))
+			updateClauses = append(updateClauses, fmt.Sprintf("%s = EXCLUDED.%s", column, column))
 			switch column {
 			case "latitude", "longitude":
 				args = append(args, nullableFloat64(item[column]))
@@ -404,12 +417,24 @@ func replaceProfileCollection(ctx context.Context, tx pgx.Tx, table string, idCo
 				args = append(args, stringValue(item[column]))
 			}
 		}
-		_, err := tx.Exec(ctx, "INSERT INTO "+table+"("+stringsJoin(names, ", ")+") VALUES ("+stringsJoin(placeholders, ", ")+")", args...)
-		if err != nil {
+		upsertSQL := fmt.Sprintf(
+			"INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (user_id, %s) DO UPDATE SET %s",
+			table,
+			stringsJoin(names, ", "),
+			stringsJoin(placeholders, ", "),
+			idColumn,
+			stringsJoin(updateClauses, ", "),
+		)
+		if _, err := tx.Exec(ctx, upsertSQL, args...); err != nil {
 			return err
 		}
 	}
-	return nil
+	if len(seenIDs) == 0 {
+		_, err := tx.Exec(ctx, "DELETE FROM "+table+" WHERE user_id=$1", cleanText(userID))
+		return err
+	}
+	_, err := tx.Exec(ctx, "DELETE FROM "+table+" WHERE user_id=$1 AND NOT ("+idColumn+" = ANY($2))", cleanText(userID), seenIDs)
+	return err
 }
 
 func (db *DB) listCollection(ctx context.Context, table string, idColumn string, userID string) ([]any, error) {

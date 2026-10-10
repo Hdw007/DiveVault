@@ -24,7 +24,13 @@ import {
 } from "~/routing/app-navigation.js";
 import { DEFAULT_SETTINGS_SECTION, SETTINGS_SECTION_IDS, MAIN_ROUTE_BY_VIEW, encodePathSegment } from "~/routing/routes.js";
 import { createApiClient, requireJson } from "~/shared/api/client.js";
-import { createDive, deleteDive as deleteDiveRequest, fetchDives as fetchDivesRequest, updateDiveLogbook } from "~/shared/api/dives.js";
+import {
+  createDive,
+  deleteDive as deleteDiveRequest,
+  fetchDive as fetchDiveRequest,
+  fetchDives as fetchDivesRequest,
+  updateDiveLogbook
+} from "~/shared/api/dives.js";
 import {
   fetchEquipment as fetchEquipmentRequest,
   markEquipmentServiced as markEquipmentServicedRequest,
@@ -219,6 +225,14 @@ export default {
       handler() {
         this.handleRouteNavigation();
       }
+    },
+    selectedDiveId: {
+      handler(newId) {
+        if (newId) {
+          this.fetchSelectedDiveDetails(newId);
+        }
+      },
+      immediate: true
     }
   },
   computed: {
@@ -630,6 +644,7 @@ export default {
       this.selectedDiveId = diveId;
       this.selectedImportId = null;
       this.selectedEditDiveId = null;
+      this.fetchSelectedDiveDetails(diveId);
       await this.navigateToAppRoute(`/logs/${encodePathSegment(diveId)}`);
     },
     async closeDiveDetail() {
@@ -1300,6 +1315,9 @@ export default {
           this.dashboardStats = { ...this.dashboardStats, ...summarizeDivesFallback(this.dives) };
         }
         this.syncImportDrafts();
+        if (this.selectedDiveId) {
+          this.fetchSelectedDiveDetails(this.selectedDiveId);
+        }
         if (this.selectedImportId && !this.isPendingImportId(this.selectedImportId, this.dives, this.importDrafts)) {
           this.selectedImportId = null;
           if (this.activeView === "imports") {
@@ -1319,6 +1337,30 @@ export default {
         this.error = error.message || "Unknown frontend error";
       } finally {
         this.loading = false;
+      }
+    },
+    async fetchSelectedDiveDetails(diveId) {
+      if (!diveId || !this.isAuthenticated) return;
+      const idStr = String(diveId);
+      const target = this.dives.find((d) => String(d.id) === idStr);
+      if (target && Array.isArray(target.samples) && target.samples.length > 0) {
+        return;
+      }
+      try {
+        const response = await fetchDiveRequest(this.apiClient(), idStr);
+        if (!response.ok) return;
+        const fullDive = await response.json();
+        if (fullDive && String(fullDive.id) === idStr) {
+          if (target) {
+            target.samples = Array.isArray(fullDive.samples) ? fullDive.samples : [];
+            if (fullDive.fields) target.fields = fullDive.fields;
+            if (typeof fullDive.sample_count === "number") target.sample_count = fullDive.sample_count;
+          } else if (this.dives.length > 0) {
+            this.dives.push(fullDive);
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to fetch dive telemetry details", err);
       }
     },
     async fetchProfileData() {

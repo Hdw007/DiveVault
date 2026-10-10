@@ -68,16 +68,16 @@ Status Legend:
 ### Phase 1: High-Impact Performance & Database Safety (Immediate)
 *Goal: Eliminate UI thread lag, reduce network payloads by ~90%, and prevent database churn.*
 
-- [ ] **1.1 Lightweight Dive Listing (Frontend)**
+- [x] **1.1 Lightweight Dive Listing (Frontend)**
   - Update `fetchDives` in `frontend/app/shared/api/dives.js` to default to `include_samples=0`.
   - Update `DiveDetail.vue` to fetch the full dive payload (`GET /api/dives/:id?include_samples=1`) on mount.
   - Verify dashboard, logs list, and import queue remain fully functional with lightweight payloads.
-- [ ] **1.2 Selective SQL Queries (Backend)**
+- [x] **1.2 Selective SQL Queries (Backend)**
   - Modify `ListDives` and `ListAllDives` in `backend-go/internal/store/domain.go` to exclude `raw_data` and `samples_json` from the SQL `SELECT` statement unless `includeSamples` or `includeRawData` is true.
   - Keep `GetDive(id)` loading full data for detail views.
-- [ ] **1.3 Non-Destructive Profile Updates (Backend)**
+- [x] **1.3 Non-Destructive Profile Updates (Backend)**
   - Refactor `replaceProfileCollection` in `backend-go/internal/store/domain.go` to use atomic UPSERT (`ON CONFLICT (user_id, <id_col>) DO UPDATE`) and transactional deletion of only removed IDs, preserving existing IDs and avoiding table-wide deletes.
-- [ ] **1.4 Verification**
+- [x] **1.4 Verification**
   - Run full backend Go test suite (`go test ./backend-go/...`).
   - Run full Playwright test suite (`cd frontend && npm test`).
 
@@ -138,3 +138,4 @@ Status Legend:
   - Desktop sync improvements (DiveVault CLI integration).
   - Multi-gas profile visualization.
   - Enhanced export options (Fit/UDDF).
+

@@ -12,7 +12,12 @@ export function deleteDive(api, diveId) {
   return api.request(diveUrl(diveId), { method: "DELETE" });
 }
 
-export function fetchDives(api, query = "limit=250&include_samples=1") {
+export function fetchDive(api, diveId, query = "include_samples=1") {
+  const queryString = query ? `?${query}` : "";
+  return api.request(`${diveUrl(diveId)}${queryString}`);
+}
+
+export function fetchDives(api, query = "limit=250&include_samples=0") {
   return api.request(`${API_ENDPOINTS.dives}?${query}`);
 }
 

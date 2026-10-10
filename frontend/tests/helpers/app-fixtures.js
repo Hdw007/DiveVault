@@ -596,7 +596,16 @@ async function installAppMocks(page, options = {}) {
     }
 
     if (pathname === "/api/dives" && request.method() === "GET") {
-      await fulfillJson(route, { dives: clone(data.dives), stats: clone(data.stats) });
+      const includeSamples = url.searchParams.get("include_samples") === "1";
+      const divesToReturn = clone(data.dives).map((dive) => {
+        if (!includeSamples) {
+          const sampleCount = Array.isArray(dive.samples) ? dive.samples.length : dive.sample_count || 0;
+          delete dive.samples;
+          dive.sample_count = sampleCount;
+        }
+        return dive;
+      });
+      await fulfillJson(route, { dives: divesToReturn, stats: clone(data.stats) });
       return;
     }
 
@@ -654,6 +663,17 @@ async function installAppMocks(page, options = {}) {
         guides: payload.guides ?? data.profile.guides
       };
       await fulfillJson(route, clone(data.profile));
+      return;
+    }
+
+    const singleDiveMatch = pathname.match(/^\/api\/dives\/([^/]+)$/);
+    if (singleDiveMatch && request.method() === "GET") {
+      const dive = data.dives.find((d) => String(d.id) === String(singleDiveMatch[1]));
+      if (!dive) {
+        await fulfillJson(route, { error: "Dive not found." }, 404);
+        return;
+      }
+      await fulfillJson(route, clone(dive));
       return;
     }
 

@@ -127,6 +127,7 @@ test("covers dashboard, logs, dive detail, and logbook editing", async ({ page }
   await visibleLogRow.focus();
   await page.keyboard.press("Enter");
   await expect(page.getByText("Back To Logs")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Technical Telemetry" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Logbook Details" })).toBeVisible();
   await expect(page.locator("article:visible", { hasText: "Suit" }).filter({ hasText: "5mm full suit" }).first()).toBeVisible();
   await expect(page.locator("p:visible", { hasText: "18 m / excellent" }).first()).toBeVisible();
@@ -502,4 +503,33 @@ test("covers the public profile route", async ({ page }) => {
   await expect(page.getByText("Public Dive Log")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Avery Marlow" })).toBeVisible();
   await expect(page.getByText("Blue Hole")).toBeVisible();
+});
+
+test("loads dive list with lightweight samples and fetches telemetry on detail view", async ({ page }) => {
+  let listQuery = "";
+  let detailRequested = false;
+
+  page.on("request", (req) => {
+    const url = req.url();
+    if (url.includes("/api/dives?")) {
+      listQuery = new URL(url).search;
+    }
+    if (url.includes("/api/dives/101")) {
+      detailRequested = true;
+    }
+  });
+
+  await installAppMocks(page);
+  await gotoAndWait(page);
+
+  await page.getByRole("button", { name: "Dive Logs" }).click();
+  await expect(page.getByRole("heading", { name: "Dive Logs", exact: true })).toBeVisible();
+  expect(listQuery).toContain("include_samples=0");
+
+  const firstDive = page.locator("article[role='button']:visible").filter({ hasText: "#0001" }).first();
+  await firstDive.click();
+
+  await expect(page.getByRole("heading", { name: "Technical Telemetry" })).toBeVisible();
+  await expect(page.getByText("24.9 L/min")).toBeVisible();
+  expect(detailRequested).toBe(true);
 });

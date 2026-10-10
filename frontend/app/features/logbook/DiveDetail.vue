@@ -74,6 +74,9 @@ export default {
     hasDepthProfile() {
       return this.depthPlotSeries.length > 0;
     },
+    isLoadingSamples() {
+      return Number(this.dive?.sample_count) > 0 && (!Array.isArray(this.dive?.samples) || this.dive.samples.length === 0);
+    },
     pressurePlotSeries() {
       return pressureSeries(this.dive);
     },
@@ -556,6 +559,15 @@ export default {
             >
               <span v-for="label in mobileTimeLabels" :key="'mobile-time-' + label">{{ label }}</span>
             </div>
+          </div>
+        </section>
+
+        <section v-else-if="isLoadingSamples" class="space-y-4">
+          <div class="flex items-end justify-between">
+            <h4 class="font-headline text-xs font-bold uppercase tracking-[0.2em] text-on-surface-variant">Profile Analysis</h4>
+          </div>
+          <div class="flex h-48 items-center justify-center rounded-xl bg-surface-container-low p-4 animate-pulse">
+            <span class="font-label text-xs uppercase tracking-wider text-on-surface-variant/70">Loading dive profile telemetry...</span>
           </div>
         </section>
 
