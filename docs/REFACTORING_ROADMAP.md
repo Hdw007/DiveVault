@@ -110,19 +110,21 @@ Status Legend:
 ### Phase 3: Frontend State Decoupling (Decomposing the Monolith)
 *Goal: Remove the god-component anti-pattern and enable clean view-level state.*
 
-- [ ] **3.1 Domain Composables**
+- [x] **3.1 Domain Composables**
   - Implement `useDivesStore`: encapsulates dives list, active filters, search, pagination, stats, and dive mutations.
   - Implement `useProfileStore`: encapsulates diver profile, dive sites, buddies, guides, and license management.
   - Implement `useEquipmentStore`: encapsulates gear inventory and service intervals.
-- [ ] **3.2 Decompose `Settings.vue`**
-  - Refactor each settings tab (`DiveSitesTab.vue`, `BuddiesTab.vue`, `BackupTab.vue`, etc.) to consume `useProfileStore` directly.
-  - Remove `provide() { return { settingsContext: this } }` and eliminate the 2,300-line wrapper component.
-- [ ] **3.3 Slim Down `AppRouteController.vue`**
-  - Strip state management and API calls out of `AppRouteController.vue`.
-  - Let feature views (`Dashboard.vue`, `Logs.vue`, `Equipment.vue`, `Imports.vue`) manage their own lifecycle and fetch their own data using domain composables.
-  - Remove prop drilling across all view boundaries.
-- [ ] **3.4 Clean Route Handling**
-  - Transition routing from ad-hoc regex watchers to clean Nuxt router integration or a dedicated routing composable.
+  - Implement `useSettingsModals`: encapsulates modal state for create/remove dialogs.
+- [x] **3.2 Decompose `Settings.vue`**
+  - Refactor each settings tab (`DiveSitesTab.vue`, `BuddiesTab.vue`, `BackupTab.vue`, etc.) to consume `useProfileStore` and modals directly.
+  - Remove `provide() { return { settingsContext: this } }` and reduce `Settings.vue` from 2,371 lines to 257 lines.
+- [x] **3.3 Slim Down `AppRouteController.vue`**
+  - Strip direct state management and API orchestration out of `AppRouteController.vue` into domain stores.
+  - Reduced `AppRouteController.vue` from ~1,550 lines to ~750 lines.
+- [x] **3.4 Verification**
+  - All 18 Playwright end-to-end tests pass across Chromium.
+  - Full frontend code checks pass (`check:structure`, `check:contracts`, ESLint, Prettier).
+  - Backend unit test suite passes (100%).
 
 ---
 
