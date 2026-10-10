@@ -1,47 +1,186 @@
 <script>
-import { settingsContextComputed, settingsContextMethods } from "./settings-context.js";
+import { useProfileStore } from "~/shared/composables/use-profile-store.js";
+import { useSettingsModals } from "~/shared/composables/use-settings-modals.js";
+import { createSettingsDiveSiteMapOptions } from "~/shared/composables/settings-dive-site-map.js";
+import { cloneDiveSites } from "~/shared/utils/settings-profile.js";
 
 export default {
   name: "DiveSitesTab",
-  inject: ["settingsContext"],
+  setup() {
+    const profileStore = useProfileStore();
+    const modals = useSettingsModals();
+    return {
+      profileStore,
+      modals
+    };
+  },
+  data() {
+    return {
+      diveSiteFilter: "",
+      diveSitePage: 1,
+      diveSitePageSize: 10,
+      diveSitePageSizeOptions: [5, 10, 20, 50],
+      diveSiteDrafts: [],
+      editingDiveSiteIds: [],
+      expandedDiveSiteIds: [],
+      openDiveSiteMapIds: [],
+      diveSiteLookupId: null
+    };
+  },
   computed: {
-    ...settingsContextComputed([
-      "areDiveSitesEditing",
-      "diveSiteDrafts",
-      "diveSiteFilter",
-      "diveSitePage",
-      "diveSitePageCount",
-      "diveSitePageSize",
-      "diveSitePageSizeOptions",
-      "diveSitePaginationLabel",
-      "diveSites",
-      "diveSitesSaving",
-      "isInteractionLocked",
-      "pagedDiveSites",
-      "visibleDiveSites"
-    ])
+    diveSites() {
+      return this.profileStore.diveSites || [];
+    },
+    diveSitesSaving() {
+      return this.profileStore.isSaving;
+    },
+    isInteractionLocked() {
+      return this.profileStore.isLoading || this.profileStore.isSaving;
+    },
+    areDiveSitesEditing() {
+      return this.editingDiveSiteIds.length > 0;
+    },
+    visibleDiveSites() {
+      const source = this.areDiveSitesEditing ? this.diveSiteDrafts : this.diveSites;
+      const filter = this.diveSiteFilter.trim().toLowerCase();
+      if (!filter) return source;
+      return source.filter(
+        (site) =>
+          (site.name || "").toLowerCase().includes(filter) ||
+          (site.location || "").toLowerCase().includes(filter) ||
+          (site.country || "").toLowerCase().includes(filter)
+      );
+    },
+    diveSitePageCount() {
+      return Math.max(1, Math.ceil(this.visibleDiveSites.length / this.diveSitePageSize));
+    },
+    pagedDiveSites() {
+      const start = (this.diveSitePage - 1) * this.diveSitePageSize;
+      return this.visibleDiveSites.slice(start, start + this.diveSitePageSize);
+    },
+    diveSitePaginationLabel() {
+      if (!this.visibleDiveSites.length) return "0 dive sites";
+      const start = (this.diveSitePage - 1) * this.diveSitePageSize + 1;
+      const end = Math.min(this.diveSitePage * this.diveSitePageSize, this.visibleDiveSites.length);
+      return `${start}-${end} of ${this.visibleDiveSites.length} dive sites`;
+    }
+  },
+  watch: {
+    diveSiteFilter() {
+      this.diveSitePage = 1;
+    },
+    diveSites: {
+      immediate: true,
+      handler(nextSites) {
+        if (!this.areDiveSitesEditing) {
+          this.diveSiteDrafts = cloneDiveSites(nextSites);
+        }
+      }
+    }
   },
   methods: {
-    ...settingsContextMethods([
-      "addDiveSiteEntry",
-      "cancelDiveSitesEdit",
-      "confirmRemoveDiveSiteItem",
-      "displayValue",
-      "diveSiteHasCoordinates",
-      "diveSiteMapOpen",
-      "editDiveSiteItem",
-      "isDiveSiteEditing",
-      "isDiveSiteExpanded",
-      "isLookingUpDiveSite",
-      "nextDiveSitePage",
-      "pagedDiveSiteTitle",
-      "previousDiveSitePage",
-      "saveDiveSites",
-      "searchDiveSiteLocationById",
-      "setDiveSiteMapRef",
-      "syncDiveSiteMapFromFields",
-      "toggleDiveSiteMap"
-    ])
+    ...createSettingsDiveSiteMapOptions(),
+    findCollectionIndexById(collection, id) {
+      return (collection || []).findIndex((entry) => entry.id === id);
+    },
+    addDiveSiteEntry() {
+      this.modals.openCreateModal("dive-site");
+    },
+    diveSiteTitle(site, index) {
+      return site.name?.trim() || `Dive Site ${index + 1}`;
+    },
+    pagedDiveSiteTitle(site, index) {
+      return this.diveSiteTitle(site, (this.diveSitePage - 1) * this.diveSitePageSize + index);
+    },
+    displayValue(value, fallback = "—") {
+      return value ? String(value).trim() || fallback : fallback;
+    },
+    diveSiteHasCoordinates(site) {
+      return (
+        site?.latitude !== "" &&
+        site?.latitude !== null &&
+        site?.latitude !== undefined &&
+        site?.longitude !== "" &&
+        site?.longitude !== null &&
+        site?.longitude !== undefined
+      );
+    },
+    isDiveSiteEditing(siteId) {
+      return this.editingDiveSiteIds.includes(siteId);
+    },
+    isDiveSiteExpanded(siteId) {
+      return this.expandedDiveSiteIds.includes(siteId);
+    },
+    isLookingUpDiveSite(siteId) {
+      return this.diveSiteLookupId === siteId;
+    },
+    previousDiveSitePage() {
+      if (this.diveSitePage > 1) {
+        this.diveSitePage--;
+      }
+    },
+    nextDiveSitePage() {
+      if (this.diveSitePage < this.diveSitePageCount) {
+        this.diveSitePage++;
+      }
+    },
+    editDiveSiteItem(siteId) {
+      this.diveSiteDrafts = cloneDiveSites(this.diveSites);
+      this.editingDiveSiteIds = [siteId];
+      if (!this.expandedDiveSiteIds.includes(siteId)) {
+        this.expandedDiveSiteIds = [...this.expandedDiveSiteIds, siteId];
+      }
+    },
+    cancelDiveSitesEdit() {
+      this.diveSiteDrafts = cloneDiveSites(this.diveSites);
+      this.editingDiveSiteIds = [];
+      this.closeAllDiveSiteMaps();
+    },
+    async saveDiveSites() {
+      await this.profileStore.saveDiveSites(this.diveSiteDrafts);
+      this.editingDiveSiteIds = [];
+    },
+    async searchDiveSiteLocationById(siteId) {
+      const index = this.findCollectionIndexById(this.diveSiteDrafts, siteId);
+      if (index === -1) return;
+      const site = this.diveSiteDrafts[index];
+      const query = (site.location || "").trim();
+      if (!query) return;
+
+      this.diveSiteLookupId = siteId;
+      try {
+        const payload = await this.profileStore.searchLocation(query);
+        if (payload?.found && payload?.result) {
+          const nextDrafts = this.diveSiteDrafts.slice();
+          nextDrafts[index] = {
+            ...nextDrafts[index],
+            country: typeof payload.result.country === "string" ? payload.result.country : nextDrafts[index].country,
+            latitude: String(payload.result.latitude),
+            longitude: String(payload.result.longitude)
+          };
+          this.diveSiteDrafts = nextDrafts;
+          this.$nextTick(() => this.syncDiveSiteMapFromFields(siteId));
+        }
+      } finally {
+        this.diveSiteLookupId = null;
+      }
+    },
+    confirmRemoveDiveSiteItem(siteId) {
+      const site = this.diveSiteDrafts.find((s) => s.id === siteId) || this.diveSites.find((s) => s.id === siteId);
+      const index = (this.areDiveSitesEditing ? this.diveSiteDrafts : this.diveSites).findIndex((s) => s.id === siteId);
+      const label = site ? this.pagedDiveSiteTitle(site, index) : "this dive site";
+
+      this.modals.openRemovalModal({
+        type: "dive-site",
+        id: siteId,
+        label,
+        onConfirm: async () => {
+          const nextSites = this.diveSites.filter((s) => s.id !== siteId);
+          await this.profileStore.saveDiveSites(nextSites);
+          this.cancelDiveSitesEdit();
+        }
+      });
+    }
   }
 };
 </script>

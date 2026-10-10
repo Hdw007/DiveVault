@@ -2,17 +2,10 @@
 import { defineAsyncComponent } from "vue";
 import { useRoute, useRouter } from "#app";
 import { useAuth, useUser } from "~/shared/composables/auth.js";
-import {
-  filledIconStyle,
-  importDraftSeed,
-  isImportComplete,
-  effectiveImportDraft,
-  missingImportFields,
-  normalizeRequiredLogbookFields,
-  paddedDiveIndex,
-  isCommittedDive,
-  pressureRange
-} from "~/shared/utils/core.js";
+import { useDivesStore } from "~/shared/composables/use-dives-store.js";
+import { useProfileStore } from "~/shared/composables/use-profile-store.js";
+import { useEquipmentStore } from "~/shared/composables/use-equipment-store.js";
+import { filledIconStyle, isCommittedDive, paddedDiveIndex } from "~/shared/utils/core.js";
 import { NAV_ITEMS } from "~/config/navigation.js";
 import { DEFAULT_REQUEST_TIMEOUT_MS } from "~/config/runtime.js";
 import {
@@ -23,22 +16,8 @@ import {
   syncRouteMode as syncAppRouteMode
 } from "~/routing/app-navigation.js";
 import { DEFAULT_SETTINGS_SECTION, SETTINGS_SECTION_IDS, MAIN_ROUTE_BY_VIEW, encodePathSegment } from "~/routing/routes.js";
-import { createApiClient, requireJson } from "~/shared/api/client.js";
-import {
-  createDive,
-  deleteDive as deleteDiveRequest,
-  fetchDive as fetchDiveRequest,
-  fetchDives as fetchDivesRequest,
-  updateDiveLogbook
-} from "~/shared/api/dives.js";
-import {
-  fetchEquipment as fetchEquipmentRequest,
-  markEquipmentServiced as markEquipmentServicedRequest,
-  saveEquipment as saveEquipmentRequest
-} from "~/shared/api/equipment.js";
-import { uploadCsv, uploadSubsurface } from "~/shared/api/imports.js";
+import { createApiClient } from "~/shared/api/client.js";
 import { updatePassword } from "~/shared/api/auth.js";
-import { fetchHealth, fetchProfile, searchGeocode, updateProfile } from "~/shared/api/profile.js";
 import {
   createPreferenceState,
   detachSystemThemeListener,
@@ -62,45 +41,6 @@ const ManualDiveEntryView = defineAsyncComponent(() => import("~/features/logboo
 const PublicProfileView = defineAsyncComponent(() => import("~/features/public-profile/PublicProfile.vue"));
 const SettingsView = defineAsyncComponent(() => import("~/features/settings/Settings.vue"));
 
-function summarizeDivesFallback(dives) {
-  const targetDives = dives.filter((dive) => isCommittedDive(dive));
-  const divesToUse = targetDives.length ? targetDives : dives;
-  const totalDives = divesToUse.length;
-  let totalSeconds = 0;
-  let maxDepth = 0;
-  let totalBarConsumed = 0;
-  let sumDepth = 0;
-
-  for (const dive of divesToUse) {
-    const sec = Number(dive?.duration_seconds || (dive?.duration_ms ? dive.duration_ms / 1000 : 0)) || 0;
-    if (sec > 0) totalSeconds += sec;
-    const depth = Number(dive?.max_depth_m || 0);
-    if (depth > maxDepth) maxDepth = depth;
-    sumDepth += depth;
-
-    const range = pressureRange(dive);
-    if (typeof range?.begin === "number" && typeof range?.end === "number") {
-      const consumed = Math.round(range.begin - range.end);
-      if (consumed > 0) totalBarConsumed += consumed;
-    }
-  }
-
-  const totalHours = totalSeconds ? Math.round((totalSeconds / 3600) * 10) / 10 : 0;
-  const averageDurationSeconds = totalDives ? Math.round((totalSeconds / totalDives) * 100) / 100 : 0;
-  const averageMaxDepth = totalDives ? Math.round((sumDepth / totalDives) * 100) / 100 : 0;
-
-  return {
-    totalDives,
-    totalSeconds,
-    totalHours,
-    maxDepth,
-    totalBarConsumed,
-    averageDurationSeconds,
-    averageMaxDepth,
-    bottomTimeProgress: Math.min(100, Math.round(totalHours))
-  };
-}
-
 export default {
   name: "AppRouteController",
   components: {
@@ -121,6 +61,9 @@ export default {
     const router = useRouter();
     const { getToken, isLoaded, isSignedIn, sessionId, signOut } = useAuth();
     const { user } = useUser();
+    const divesStore = useDivesStore();
+    const profileStore = useProfileStore();
+    const equipmentStore = useEquipmentStore();
 
     return {
       authGetToken: getToken,
@@ -130,7 +73,10 @@ export default {
       authSignedIn: isSignedIn,
       authUser: user,
       nuxtRoute: route,
-      nuxtRouter: router
+      nuxtRouter: router,
+      divesStore,
+      profileStore,
+      equipmentStore
     };
   },
   data() {
@@ -140,44 +86,6 @@ export default {
       publicRouteSlug: typeof window !== "undefined" ? window.location.pathname.match(/^\/public\/([^/]+)\/?$/)?.[1] || "" : "",
       sessionEmail: "",
       activeView: "dashboard",
-      selectedDiveId: null,
-      selectedImportId: null,
-      selectedEditDiveId: null,
-      manualDiveDraft: createManualDiveDraft(),
-      manualDiveCreating: false,
-      manualDiveError: "",
-      searchText: "",
-      dives: [],
-      profileDiveSites: [],
-      profileBuddies: [],
-      profileGuides: [],
-      profileLogbookDisplayFields: [],
-      profileRequiredLogbookFields: ["site"],
-      profileEquipmentSelectionEnabled: true,
-      equipment: [],
-      equipmentSaving: false,
-      equipmentServicingId: null,
-      equipmentStatusMessage: "",
-      equipmentError: "",
-      importDrafts: {},
-      savingImportId: null,
-      bulkImportSavePending: false,
-      deletingDiveId: null,
-      importError: "",
-      importStatusMessage: "",
-      loading: true,
-      error: "",
-      backendHealthy: false,
-      dashboardStats: {
-        totalDives: 0,
-        totalSeconds: 0,
-        totalHours: 0,
-        maxDepth: 0,
-        totalBarConsumed: 0,
-        averageDurationSeconds: 0,
-        averageMaxDepth: 0,
-        bottomTimeProgress: 0
-      },
       lastAuthenticatedSessionId: null,
       requestTimeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
       cliAuthCode: "",
@@ -254,12 +162,6 @@ export default {
         .join("");
       return initials || "DV";
     },
-    defaultEquipmentIds() {
-      return this.equipment
-        .filter((item) => item?.is_default || item?.is_standard)
-        .map((item) => String(item.id))
-        .filter(Boolean);
-    },
     activeSection() {
       if (this.activeView === "edit" && this.selectedEditDive) {
         return { eyebrow: "Dive Archive", title: "Logbook Editor" };
@@ -287,27 +189,6 @@ export default {
       }
       return this.navItems.find((item) => item.id === this.activeView)?.label || "Dashboard";
     },
-    selectedDive() {
-      return this.dives.find((dive) => String(dive.id) === String(this.selectedDiveId)) || null;
-    },
-    selectedImportDive() {
-      const dive = this.dives.find((entry) => String(entry.id) === String(this.selectedImportId)) || null;
-      return dive && !isCommittedDive(dive) ? dive : null;
-    },
-    selectedImportDraft() {
-      return this.selectedImportDive
-        ? effectiveImportDraft(this.selectedImportDive, this.importDrafts[String(this.selectedImportDive.id)])
-        : null;
-    },
-    selectedEditDive() {
-      const dive = this.dives.find((entry) => String(entry.id) === String(this.selectedEditDiveId)) || null;
-      return dive && isCommittedDive(dive) ? dive : null;
-    },
-    selectedEditDraft() {
-      return this.selectedEditDive
-        ? effectiveImportDraft(this.selectedEditDive, this.importDrafts[String(this.selectedEditDive.id)])
-        : null;
-    },
     backendStatusLabel() {
       if (this.loading) return "Syncing telemetry";
       if (this.error) return "Backend unreachable";
@@ -317,15 +198,6 @@ export default {
       if (this.loading) return "Waiting for API response.";
       if (this.error) return "Check the backend server and API routes.";
       return `${this.dives.length} dives loaded from /api/dives`;
-    },
-    stats() {
-      return this.dashboardStats;
-    },
-    committedDives() {
-      return this.dives.filter((dive) => isCommittedDive(dive));
-    },
-    importedDiveCount() {
-      return this.dives.length - this.committedDives.length;
     },
     isPublicRoute() {
       return Boolean(this.publicRouteSlug);
@@ -349,6 +221,146 @@ export default {
       if (this.activeView === "logs" && this.selectedDiveId) return "detail";
       if (this.activeView === "logs") return "logs";
       return "dashboard";
+    },
+
+    // Dives store bindings
+    selectedDiveId: {
+      get() {
+        return this.divesStore.selectedDiveId;
+      },
+      set(val) {
+        this.divesStore.selectedDiveId = val;
+      }
+    },
+    selectedImportId: {
+      get() {
+        return this.divesStore.selectedImportId;
+      },
+      set(val) {
+        this.divesStore.selectedImportId = val;
+      }
+    },
+    selectedEditDiveId: {
+      get() {
+        return this.divesStore.selectedEditDiveId;
+      },
+      set(val) {
+        this.divesStore.selectedEditDiveId = val;
+      }
+    },
+    searchText: {
+      get() {
+        return this.divesStore.searchText;
+      },
+      set(val) {
+        this.divesStore.searchText = val;
+      }
+    },
+    dives() {
+      return this.divesStore.dives;
+    },
+    committedDives() {
+      return this.divesStore.committedDives;
+    },
+    importedDiveCount() {
+      return this.divesStore.importedDiveCount;
+    },
+    selectedDive() {
+      return this.divesStore.selectedDive;
+    },
+    selectedImportDive() {
+      return this.divesStore.selectedImportDive;
+    },
+    selectedImportDraft() {
+      return this.divesStore.selectedImportDraft;
+    },
+    selectedEditDive() {
+      return this.divesStore.selectedEditDive;
+    },
+    selectedEditDraft() {
+      return this.divesStore.selectedEditDraft;
+    },
+    dashboardStats() {
+      return this.divesStore.dashboardStats;
+    },
+    stats() {
+      return this.divesStore.stats;
+    },
+    loading() {
+      return this.divesStore.isLoading;
+    },
+    error() {
+      return this.divesStore.error;
+    },
+    backendHealthy() {
+      return this.divesStore.backendHealthy;
+    },
+    importDrafts() {
+      return this.divesStore.importDrafts;
+    },
+    savingImportId() {
+      return this.divesStore.savingImportId;
+    },
+    bulkImportSavePending() {
+      return this.divesStore.bulkImportSavePending;
+    },
+    deletingDiveId() {
+      return this.divesStore.deletingDiveId;
+    },
+    importStatusMessage() {
+      return this.divesStore.importStatusMessage;
+    },
+    importError() {
+      return this.divesStore.importError;
+    },
+    manualDiveDraft() {
+      return this.divesStore.manualDiveDraft;
+    },
+    manualDiveCreating() {
+      return this.divesStore.manualDiveCreating;
+    },
+    manualDiveError() {
+      return this.divesStore.manualDiveError;
+    },
+
+    // Equipment store bindings
+    equipment() {
+      return this.equipmentStore.equipment;
+    },
+    defaultEquipmentIds() {
+      return this.equipmentStore.defaultEquipmentIds;
+    },
+    equipmentSaving() {
+      return this.equipmentStore.isSaving;
+    },
+    equipmentServicingId() {
+      return this.equipmentStore.servicingId;
+    },
+    equipmentStatusMessage() {
+      return this.equipmentStore.statusMessage;
+    },
+    equipmentError() {
+      return this.equipmentStore.error;
+    },
+
+    // Profile store bindings
+    profileDiveSites() {
+      return this.profileStore.diveSites;
+    },
+    profileBuddies() {
+      return this.profileStore.buddies;
+    },
+    profileGuides() {
+      return this.profileStore.guides;
+    },
+    profileLogbookDisplayFields() {
+      return this.profileStore.logbookDisplayFields;
+    },
+    profileRequiredLogbookFields() {
+      return this.profileStore.requiredLogbookFields;
+    },
+    profileEquipmentSelectionEnabled() {
+      return this.profileStore.equipmentSelectionEnabled;
     }
   },
   methods: {
@@ -391,34 +403,9 @@ export default {
     resetAuthenticatedState() {
       this.isAuthenticated = false;
       this.sessionEmail = "";
-      this.selectedDiveId = null;
-      this.selectedImportId = null;
-      this.selectedEditDiveId = null;
-      this.manualDiveDraft = createManualDiveDraft();
-      this.manualDiveCreating = false;
-      this.manualDiveError = "";
-      this.searchText = "";
-      this.dives = [];
-      this.profileDiveSites = [];
-      this.profileBuddies = [];
-      this.profileGuides = [];
-      this.profileLogbookDisplayFields = [];
-      this.profileRequiredLogbookFields = ["site"];
-      this.profileEquipmentSelectionEnabled = true;
-      this.equipment = [];
-      this.equipmentSaving = false;
-      this.equipmentServicingId = null;
-      this.equipmentStatusMessage = "";
-      this.equipmentError = "";
-      this.importDrafts = {};
-      this.savingImportId = null;
-      this.bulkImportSavePending = false;
-      this.deletingDiveId = null;
-      this.importError = "";
-      this.importStatusMessage = "";
-      this.loading = false;
-      this.error = "";
-      this.backendHealthy = false;
+      this.divesStore.resetState();
+      this.equipmentStore.resetState();
+      this.profileStore.resetState();
       this.passwordDialogOpen = false;
       this.passwordForm = {
         currentPassword: "",
@@ -428,28 +415,18 @@ export default {
       this.passwordSubmitting = false;
       this.passwordError = "";
       this.passwordStatus = "";
-      this.dashboardStats = {
-        totalDives: 0,
-        totalSeconds: 0,
-        totalHours: 0,
-        maxDepth: 0,
-        totalBarConsumed: 0,
-        averageDurationSeconds: 0,
-        averageMaxDepth: 0,
-        bottomTimeProgress: 0
-      };
       this.activeSettingsSection = DEFAULT_SETTINGS_SECTION;
       this.desktopAccountMenuOpen = false;
       this.lastAuthenticatedSessionId = null;
     },
     async syncAuthState() {
       if (this.isPublicRoute) {
-        this.loading = false;
+        this.divesStore.state.loading = false;
         return;
       }
 
       if (!this.authLoaded) {
-        this.loading = true;
+        this.divesStore.state.loading = true;
         return;
       }
 
@@ -591,10 +568,10 @@ export default {
       if (view !== "logs") this.selectedDiveId = null;
       if (view !== "imports") this.selectedImportId = null;
       if (view !== "edit") this.selectedEditDiveId = null;
-      if (view !== "create") this.manualDiveError = "";
+      if (view !== "create") this.divesStore.state.manualDiveError = "";
       if (view !== "settings") this.cliAuthCode = "";
-      this.importError = "";
-      this.importStatusMessage = "";
+      this.divesStore.state.importError = "";
+      this.divesStore.state.importStatusMessage = "";
       await this.navigateToAppRoute(MAIN_ROUTE_BY_VIEW[view] || "/");
       if (this.isAuthenticated && ["dashboard", "logs", "imports", "edit"].includes(view)) {
         await this.fetchDives();
@@ -606,25 +583,21 @@ export default {
       this.selectedDiveId = null;
       this.selectedImportId = null;
       this.selectedEditDiveId = null;
-      this.manualDiveDraft = createManualDiveDraft();
-      this.manualDiveCreating = false;
-      this.manualDiveError = "";
-      this.importError = "";
-      this.importStatusMessage = "";
+      this.divesStore.state.manualDiveDraft = createManualDiveDraft();
+      this.divesStore.state.manualDiveCreating = false;
+      this.divesStore.state.manualDiveError = "";
+      this.divesStore.state.importError = "";
+      this.divesStore.state.importStatusMessage = "";
       await this.navigateToAppRoute("/logs/create");
     },
     async closeManualDiveCreator() {
       this.closeMobileAccountMenu();
       this.activeView = "logs";
-      this.manualDiveError = "";
+      this.divesStore.state.manualDiveError = "";
       await this.navigateToAppRoute("/logs");
     },
     updateManualDiveDraft(key, value) {
-      this.manualDiveDraft = {
-        ...this.manualDiveDraft,
-        [key]: value
-      };
-      this.manualDiveError = "";
+      this.divesStore.updateManualDiveDraft(key, value);
     },
     async setSettingsSection(sectionId) {
       this.closeMobileAccountMenu();
@@ -634,8 +607,8 @@ export default {
       this.selectedImportId = null;
       this.selectedEditDiveId = null;
       this.cliAuthCode = "";
-      this.importError = "";
-      this.importStatusMessage = "";
+      this.divesStore.state.importError = "";
+      this.divesStore.state.importStatusMessage = "";
       await this.navigateToAppRoute(this.settingsPath(this.activeSettingsSection));
     },
     async openDive(diveId) {
@@ -654,33 +627,19 @@ export default {
       this.selectedEditDiveId = null;
       await this.navigateToAppRoute("/logs");
     },
-    syncImportDrafts() {
-      const nextDrafts = {};
-      this.dives.forEach((dive) => {
-        const diveId = String(dive.id);
-        nextDrafts[diveId] = importDraftSeed(dive);
-      });
-      this.importDrafts = nextDrafts;
-    },
     resolvePendingImportId(dives = this.dives, drafts = this.importDrafts, preferredId = null) {
-      const pending = dives.filter((dive) => !isImportComplete(effectiveImportDraft(dive, drafts[String(dive.id)])));
-      if (preferredId && pending.some((dive) => String(dive.id) === String(preferredId))) {
-        return preferredId;
-      }
-      return pending[0]?.id || null;
+      return this.divesStore.resolvePendingImportId(dives, drafts, preferredId);
     },
     isPendingImportId(diveId, dives = this.dives, drafts = this.importDrafts) {
-      return dives.some(
-        (dive) => String(dive.id) === String(diveId) && !isImportComplete(effectiveImportDraft(dive, drafts[String(dive.id)]))
-      );
+      return this.divesStore.isPendingImportId(diveId, dives, drafts);
     },
     async openImportQueue(diveId = null) {
       this.closeMobileAccountMenu();
       this.activeView = "imports";
       this.selectedDiveId = null;
       this.selectedEditDiveId = null;
-      this.importError = "";
-      this.importStatusMessage = "";
+      this.divesStore.state.importError = "";
+      this.divesStore.state.importStatusMessage = "";
       if (this.isAuthenticated) {
         await this.fetchDives();
       }
@@ -693,8 +652,8 @@ export default {
       this.selectedDiveId = null;
       this.selectedEditDiveId = null;
       this.selectedImportId = this.resolvePendingImportId(this.dives, this.importDrafts, diveId);
-      this.importError = "";
-      this.importStatusMessage = "";
+      this.divesStore.state.importError = "";
+      this.divesStore.state.importStatusMessage = "";
       await this.navigateToAppRoute(this.selectedImportId ? `/imports/${encodePathSegment(this.selectedImportId)}` : "/imports");
     },
     async backToImportQueue() {
@@ -711,8 +670,8 @@ export default {
       this.selectedDiveId = null;
       this.selectedImportId = null;
       this.selectedEditDiveId = diveId;
-      this.importError = "";
-      this.importStatusMessage = "";
+      this.divesStore.state.importError = "";
+      this.divesStore.state.importStatusMessage = "";
       if (this.isAuthenticated) {
         await this.fetchDives();
       }
@@ -736,391 +695,58 @@ export default {
       await this.navigateToAppRoute(`/logs/${encodePathSegment(this.selectedDiveId)}`);
     },
     updateImportDraft(diveId, key, value) {
-      const id = String(diveId);
-      const dive = this.dives.find((entry) => String(entry.id) === id);
-      const currentDraft = effectiveImportDraft(dive, this.importDrafts[id]);
-      this.importDrafts = {
-        ...this.importDrafts,
-        [id]: {
-          ...currentDraft,
-          [key]: value,
-          status: "imported"
-        }
-      };
-      this.importStatusMessage = "";
-      this.importError = "";
-    },
-    encodeBase64Utf8(value) {
-      const bytes = new TextEncoder().encode(String(value ?? ""));
-      let binary = "";
-      const chunkSize = 0x8000;
-      for (let index = 0; index < bytes.length; index += chunkSize) {
-        const chunk = bytes.subarray(index, index + chunkSize);
-        binary += String.fromCharCode(...chunk);
-      }
-      return window.btoa(binary);
-    },
-    async sha256Hex(value) {
-      const bytes = new TextEncoder().encode(String(value ?? ""));
-      const hash = await window.crypto.subtle.digest("SHA-256", bytes);
-      return Array.from(new Uint8Array(hash))
-        .map((entry) => entry.toString(16).padStart(2, "0"))
-        .join("");
-    },
-    manualDiveStartedAt() {
-      const date = String(this.manualDiveDraft.date || "").trim();
-      const time = String(this.manualDiveDraft.time || "").trim();
-      if (!date || !time) {
-        throw new Error("Manual dives require a valid local start date and time.");
-      }
-      const startedAt = new Date(`${date}T${time}`);
-      if (Number.isNaN(startedAt.getTime())) {
-        throw new Error("Manual dives require a valid local start date and time.");
-      }
-      return startedAt.toISOString();
+      this.divesStore.updateImportDraftField(diveId, key, value);
     },
     async createManualDive() {
-      const site = String(this.manualDiveDraft.site || "").trim();
-      const buddy = String(this.manualDiveDraft.buddy || "").trim();
-      const guide = String(this.manualDiveDraft.guide || "").trim();
-      const weatherDescription = String(this.manualDiveDraft.weatherDescription || "").trim();
-      const visibility = String(this.manualDiveDraft.visibility || "").trim();
-      const wetsuitDescription = String(this.manualDiveDraft.wetsuitDescription || "").trim();
-      const weightDescription = String(this.manualDiveDraft.weightDescription || "").trim();
-      const notes = String(this.manualDiveDraft.notes || "").trim();
-      const selectedEquipmentIds = Array.isArray(this.manualDiveDraft.equipment_ids) ? this.manualDiveDraft.equipment_ids.map(String) : [];
-      const equipmentIds = this.profileEquipmentSelectionEnabled ? selectedEquipmentIds : [];
-      const durationMinutes = Number.parseFloat(this.manualDiveDraft.durationMinutes);
-      const maxDepthM = Number.parseFloat(this.manualDiveDraft.maxDepthM);
-      const temperatureInput = String(this.manualDiveDraft.temperatureC || "").trim();
-      const tankVolumeInput = String(this.manualDiveDraft.tankVolumeL || "").trim();
-      const beginPressureInput = String(this.manualDiveDraft.beginPressureBar || "").trim();
-      const endPressureInput = String(this.manualDiveDraft.endPressureBar || "").trim();
-      const temperatureC = temperatureInput === "" ? null : Number.parseFloat(temperatureInput);
-      const tankVolume = tankVolumeInput === "" ? null : Number.parseFloat(tankVolumeInput);
-      const beginPressure = beginPressureInput === "" ? null : Number.parseFloat(beginPressureInput);
-      const endPressure = endPressureInput === "" ? null : Number.parseFloat(endPressureInput);
-
-      const missingRequired = missingImportFields(
-        {
-          site,
-          buddy,
-          guide,
-          weather_description: weatherDescription,
-          visibility,
-          wetsuit_description: wetsuitDescription,
-          weight_description: weightDescription,
-          notes
-        },
-        this.profileRequiredLogbookFields
-      );
-      if (missingRequired.length) {
-        this.manualDiveError = `${missingRequired[0].label} is required for manual entries.`;
-        return;
-      }
-      if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) {
-        this.manualDiveError = "Duration must be greater than zero.";
-        return;
-      }
-      if (!Number.isFinite(maxDepthM) || maxDepthM < 0) {
-        this.manualDiveError = "Max depth must be zero or greater.";
-        return;
-      }
-      if (temperatureInput && !Number.isFinite(temperatureC)) {
-        this.manualDiveError = "Temperature must be a valid number.";
-        return;
-      }
-      if (tankVolumeInput && (!Number.isFinite(tankVolume) || tankVolume <= 0)) {
-        this.manualDiveError = "Tank volume must be greater than zero.";
-        return;
-      }
-      if (beginPressureInput && (!Number.isFinite(beginPressure) || beginPressure < 0 || beginPressure > 400)) {
-        this.manualDiveError = "Entry tank pressure must be between 0 and 400 bar.";
-        return;
-      }
-      if (endPressureInput && (!Number.isFinite(endPressure) || endPressure < 0 || endPressure > 400)) {
-        this.manualDiveError = "Exit tank pressure must be between 0 and 400 bar.";
-        return;
-      }
-      if (beginPressure !== null && endPressure !== null && endPressure > beginPressure) {
-        this.manualDiveError = "Exit tank pressure cannot be higher than entry tank pressure.";
-        return;
-      }
-
-      const startedAt = this.manualDiveStartedAt();
-      const completedAt = new Date().toISOString();
-      const rawSource = JSON.stringify({
-        source: "manual",
-        created_at: completedAt,
-        started_at: startedAt,
-        duration_seconds: Math.round(durationMinutes * 60),
-        max_depth_m: maxDepthM,
-        site,
-        buddy,
-        guide
+      const created = await this.divesStore.createManualDive({
+        requiredLogbookFields: this.profileRequiredLogbookFields,
+        equipmentSelectionEnabled: this.profileEquipmentSelectionEnabled,
+        apiClient: this.apiClient()
       });
-
-      const rawDataB64 = this.encodeBase64Utf8(rawSource);
-      const rawSha256 = await this.sha256Hex(rawSource);
-      const fields = {
-        manual_entry: true,
-        source: "manual",
-        logbook: {
-          site,
-          buddy,
-          guide,
-          weather_description: weatherDescription,
-          visibility,
-          wetsuit_description: wetsuitDescription,
-          weight_description: weightDescription,
-          notes,
-          equipment_ids: equipmentIds,
-          status: "complete",
-          completed_at: completedAt
-        }
-      };
-
-      if (Number.isFinite(temperatureC)) {
-        fields.temperature_surface_c = temperatureC;
-        fields.temperature_minimum_c = temperatureC;
-        fields.temperature_maximum_c = temperatureC;
-      }
-
-      if (Number.isFinite(tankVolume) || Number.isFinite(beginPressure) || Number.isFinite(endPressure)) {
-        const tank = {};
-        if (Number.isFinite(tankVolume)) tank.volume = tankVolume;
-        if (Number.isFinite(beginPressure)) tank.beginpressure_bar = Math.round(beginPressure);
-        if (Number.isFinite(endPressure)) tank.endpressure_bar = Math.round(endPressure);
-        fields.tanks = [tank];
-      }
-
-      this.manualDiveCreating = true;
-      this.manualDiveError = "";
-      try {
-        const response = await createDive(this.apiClient(), {
-          vendor: "Manual",
-          product: "Entry",
-          dive_uid: `manual-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
-          raw_sha256: rawSha256,
-          raw_data_b64: rawDataB64,
-          started_at: startedAt,
-          duration_seconds: Math.round(durationMinutes * 60),
-          max_depth_m: maxDepthM,
-          avg_depth_m: null,
-          fields,
-          samples: []
-        });
-        const payload = await response.json().catch(() => null);
-        if (!response.ok) {
-          throw new Error(payload?.error || `API returned ${response.status}`);
-        }
-
-        await this.fetchDives();
-        this.manualDiveDraft = createManualDiveDraft();
-        this.importStatusMessage = "Manual dive created.";
-        if (payload?.id) {
-          this.openDive(payload.id);
-        } else {
-          await this.setView("logs");
-        }
-      } catch (error) {
-        this.manualDiveError = error?.message || "Unable to create manual dive.";
-      } finally {
-        this.manualDiveCreating = false;
+      if (created?.id) {
+        this.openDive(created.id);
+      } else if (!this.manualDiveError) {
+        await this.setView("logs");
       }
     },
     async uploadCsvImport(file, options = {}) {
-      if (!file) return false;
       const dryRun = options.dryRun === true;
       const navigateToQueue = options.navigateToQueue !== false;
-      const setImportFeedback = options.setImportFeedback !== false;
-      if (setImportFeedback) {
-        this.importError = "";
-        this.importStatusMessage = "";
+      const payload = await this.divesStore.uploadCsvImport(file, options, this.apiClient());
+      if (!dryRun && navigateToQueue) {
+        this.activeView = "imports";
+        this.selectedImportId = this.resolvePendingImportId(this.dives, this.importDrafts, null);
+        await this.navigateToAppRoute(this.selectedImportId ? `/imports/${encodePathSegment(this.selectedImportId)}` : "/imports");
       }
-      const refreshAfterImport = options.refreshDives !== false;
-      try {
-        const csvText = await file.text();
-        const response = await uploadCsv(this.apiClient(), new Blob([csvText], { type: "text/csv; charset=utf-8" }), {
-          dryRun,
-          timeoutMs: 30000
-        });
-        const payload = await response.json().catch(() => null);
-        if (!response.ok) {
-          throw new Error(payload?.error || `API returned ${response.status}`);
-        }
-        if (!dryRun && refreshAfterImport) {
-          await this.fetchDives();
-        }
-        if (!dryRun && setImportFeedback) {
-          this.importStatusMessage = `CSV import processed ${payload.rows || 0} row(s): ${payload.inserted || 0} new, ${payload.duplicates || 0} duplicate.`;
-        }
-        if (!dryRun && navigateToQueue) {
-          this.activeView = "imports";
-          this.selectedImportId = this.resolvePendingImportId(this.dives, this.importDrafts, null);
-          await this.navigateToAppRoute(this.selectedImportId ? `/imports/${encodePathSegment(this.selectedImportId)}` : "/imports");
-        }
-        return payload;
-      } catch (error) {
-        if (setImportFeedback) {
-          this.importError = error?.message || "Unable to import CSV file.";
-        }
-        throw error;
-      }
+      return payload;
     },
     async uploadSubsurfaceImport(file, options = {}) {
-      if (!file) return false;
-      const dryRun = options.dryRun === true;
-      const refreshAfterImport = options.refreshDives !== false;
-      const response = await uploadSubsurface(this.apiClient(), file, { dryRun, timeoutMs: 30000 });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok) {
-        throw new Error(payload?.error || `API returned ${response.status}`);
-      }
-      if (!dryRun && refreshAfterImport) {
-        await this.fetchDives();
-      }
-      return payload;
-    },
-    async persistImportDraft(diveId, draft, commit = false) {
-      const beginPressureInput = String(draft.begin_pressure_bar || "").trim();
-      const endPressureInput = String(draft.end_pressure_bar || "").trim();
-      const beginPressure = beginPressureInput === "" ? null : Number.parseFloat(beginPressureInput);
-      const endPressure = endPressureInput === "" ? null : Number.parseFloat(endPressureInput);
-      if (beginPressureInput && (!Number.isFinite(beginPressure) || beginPressure < 0 || beginPressure > 400)) {
-        throw new Error("Entry tank pressure must be between 0 and 400 bar.");
-      }
-      if (endPressureInput && (!Number.isFinite(endPressure) || endPressure < 0 || endPressure > 400)) {
-        throw new Error("Exit tank pressure must be between 0 and 400 bar.");
-      }
-      if (beginPressure !== null && endPressure !== null && endPressure > beginPressure) {
-        throw new Error("Exit tank pressure cannot be higher than entry tank pressure.");
-      }
-
-      const response = await updateDiveLogbook(this.apiClient(), diveId, {
-        commit,
-        tank_volume_l: draft.tank_volume_l || null,
-        begin_pressure_bar: draft.begin_pressure_bar || null,
-        end_pressure_bar: draft.end_pressure_bar || null,
-        logbook: {
-          site: draft.site,
-          buddy: draft.buddy,
-          guide: draft.guide,
-          weather_description: draft.weather_description,
-          visibility: draft.visibility,
-          wetsuit_description: draft.wetsuit_description,
-          weight_description: draft.weight_description,
-          notes: draft.notes,
-          equipment_ids: Array.isArray(draft.equipment_ids) ? draft.equipment_ids : [],
-          status: commit ? "complete" : "imported"
-        }
-      });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok) {
-        throw new Error(payload?.error || `API returned ${response.status}`);
-      }
-      return payload;
+      return this.divesStore.uploadSubsurfaceImport(file, options, this.apiClient());
     },
     async saveImportDraft(diveId, commit = false) {
       const id = String(diveId);
       const dive = this.dives.find((entry) => String(entry.id) === id);
-      if (!dive) {
-        this.importError = "Dive could not be found for metadata update.";
+      const wasCommitted = dive ? isCommittedDive(dive) : false;
+
+      const updated = await this.divesStore.saveImportDraft(diveId, commit, this.profileRequiredLogbookFields, this.apiClient());
+      if (!updated) {
         return false;
       }
 
-      const wasCommitted = isCommittedDive(dive);
-      const draft = effectiveImportDraft(dive, this.importDrafts[id]);
-      const missing = missingImportFields(draft, this.profileRequiredLogbookFields);
-      if ((commit || wasCommitted) && missing.length) {
-        this.importError = `${missing[0].label} is required before completing this record.`;
-        return false;
+      if ((commit || wasCommitted) && !wasCommitted) {
+        this.selectedImportId = this.resolvePendingImportId(this.dives, this.importDrafts, null);
+        await this.navigateToAppRoute(this.selectedImportId ? `/imports/${encodePathSegment(this.selectedImportId)}` : "/imports");
       }
-
-      this.savingImportId = id;
-      this.importError = "";
-      this.importStatusMessage = "";
-      try {
-        const shouldCommit = commit || wasCommitted;
-        const updatedDive = await this.persistImportDraft(diveId, draft, shouldCommit);
-        const nextDives = this.dives.map((entry) => (String(entry.id) === id ? updatedDive : entry));
-        const nextDrafts = {
-          ...this.importDrafts,
-          [id]: importDraftSeed(updatedDive)
-        };
-
-        this.dives = nextDives;
-        this.importDrafts = nextDrafts;
-        this.importStatusMessage =
-          shouldCommit && !wasCommitted
-            ? `${paddedDiveIndex(updatedDive, nextDives)} committed to the registry.`
-            : wasCommitted
-              ? `${paddedDiveIndex(updatedDive, nextDives)} metadata updated.`
-              : `Draft saved for ${paddedDiveIndex(updatedDive)}.`;
-
-        if (shouldCommit && !wasCommitted) {
-          this.selectedImportId = this.resolvePendingImportId(nextDives, nextDrafts, null);
-          await this.navigateToAppRoute(this.selectedImportId ? `/imports/${encodePathSegment(this.selectedImportId)}` : "/imports");
-        }
-        return true;
-      } catch (error) {
-        this.importError = error.message || "Unable to save import metadata.";
-        return false;
-      } finally {
-        this.savingImportId = null;
-      }
+      return true;
     },
     async saveExistingDiveLogbook(diveId) {
       return this.saveImportDraft(diveId, true);
     },
     async createDiveSite(sitePayload) {
-      const name = typeof sitePayload?.name === "string" ? sitePayload.name.trim() : "";
-      if (!name) {
-        throw new Error("Enter a dive site name before saving it.");
-      }
-
-      const existingSite = this.profileDiveSites.find(
-        (site) => typeof site?.name === "string" && site.name.trim().toLowerCase() === name.toLowerCase()
-      );
-      if (existingSite) {
-        return existingSite;
-      }
-
-      const response = await updateProfile(this.apiClient(), {
-        dive_sites: [
-          ...this.profileDiveSites,
-          {
-            name,
-            location: typeof sitePayload?.location === "string" ? sitePayload.location.trim() : "",
-            country: typeof sitePayload?.country === "string" ? sitePayload.country.trim() : "",
-            latitude: sitePayload?.latitude ?? null,
-            longitude: sitePayload?.longitude ?? null
-          }
-        ]
-      });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok) {
-        throw new Error(payload?.error || `API returned ${response.status}`);
-      }
-
-      this.handleProfileUpdated(payload);
-      return (
-        this.profileDiveSites.find((site) => typeof site?.name === "string" && site.name.trim().toLowerCase() === name.toLowerCase()) || {
-          name
-        }
-      );
+      return this.profileStore.createDiveSite(sitePayload, this.apiClient());
     },
     async searchDiveSiteLocation(query) {
-      const normalizedQuery = typeof query === "string" ? query.trim() : "";
-      if (!normalizedQuery) {
-        throw new Error("Enter a location before searching for GPS coordinates.");
-      }
-
-      const response = await searchGeocode(this.apiClient(), normalizedQuery);
-      const payload = await response.json().catch(() => null);
-      if (!response.ok) {
-        throw new Error(payload?.error || `API returned ${response.status}`);
-      }
+      const payload = await this.profileStore.searchLocation(query, this.apiClient());
       if (!payload?.found || !payload?.result) {
         return null;
       }
@@ -1130,8 +756,8 @@ export default {
       const id = String(diveId);
       const dive = this.dives.find((entry) => String(entry.id) === id);
       if (!dive) {
-        this.importError = "Dive could not be found for deletion.";
-        this.importStatusMessage = "";
+        this.divesStore.state.importError = "Dive could not be found for deletion.";
+        this.divesStore.state.importStatusMessage = "";
         return false;
       }
 
@@ -1145,27 +771,8 @@ export default {
         return false;
       }
 
-      this.deletingDiveId = id;
-      this.importError = "";
-      this.importStatusMessage = "";
-
-      try {
-        const response = await deleteDiveRequest(this.apiClient(), diveId);
-        const payload = await response.json().catch(() => null);
-        if (!response.ok) {
-          throw new Error(payload?.error || `API returned ${response.status}`);
-        }
-
-        if (String(this.selectedDiveId) === id) {
-          this.selectedDiveId = null;
-        }
-        if (String(this.selectedImportId) === id) {
-          this.selectedImportId = null;
-        }
-        if (String(this.selectedEditDiveId) === id) {
-          this.selectedEditDiveId = null;
-        }
-
+      const success = await this.divesStore.deleteDive(diveId, this.apiClient());
+      if (success) {
         if (importedRecord) {
           this.activeView = "imports";
           await this.navigateToAppRoute("/imports");
@@ -1173,95 +780,11 @@ export default {
           this.activeView = "logs";
           await this.navigateToAppRoute("/logs");
         }
-
-        await this.fetchDives();
-        this.importStatusMessage = `${paddedDiveIndex(dive, this.dives)} removed from the ${importedRecord ? "import queue" : "dive log"}.`;
-        return true;
-      } catch (error) {
-        this.importError = error.message || "Unable to delete the dive.";
-        return false;
-      } finally {
-        this.deletingDiveId = null;
       }
+      return success;
     },
     async applyBuddyGuideToPendingImports(diveId) {
-      const id = String(diveId);
-      const sourceDive = this.dives.find((entry) => String(entry.id) === id);
-      if (!sourceDive) {
-        this.importError = "Dive could not be found for bulk metadata update.";
-        return false;
-      }
-
-      const sourceDraft = effectiveImportDraft(sourceDive, this.importDrafts[id]);
-      const updates = {};
-      if (typeof sourceDraft.buddy === "string" && sourceDraft.buddy.trim()) {
-        updates.buddy = sourceDraft.buddy;
-      }
-      if (typeof sourceDraft.guide === "string" && sourceDraft.guide.trim()) {
-        updates.guide = sourceDraft.guide;
-      }
-
-      const updateKeys = Object.keys(updates);
-      if (!updateKeys.length) {
-        this.importError = "Enter a buddy or guide before applying the values across imported dives.";
-        this.importStatusMessage = "";
-        return false;
-      }
-
-      const pendingDives = this.dives.filter(
-        (entry) => !isImportComplete(effectiveImportDraft(entry, this.importDrafts[String(entry.id)]))
-      );
-      if (!pendingDives.length) {
-        this.importError = "There are no imported dives waiting for metadata updates.";
-        this.importStatusMessage = "";
-        return false;
-      }
-
-      this.bulkImportSavePending = true;
-      this.importError = "";
-      this.importStatusMessage = "";
-
-      let nextDives = this.dives.slice();
-      let nextDrafts = { ...this.importDrafts };
-      let updatedCount = 0;
-
-      try {
-        for (const pendingDive of pendingDives) {
-          const pendingId = String(pendingDive.id);
-          const currentDraft = effectiveImportDraft(pendingDive, nextDrafts[pendingId]);
-          const updatedDive = await this.persistImportDraft(
-            pendingDive.id,
-            {
-              ...currentDraft,
-              ...updates,
-              status: "imported"
-            },
-            false
-          );
-
-          nextDives = nextDives.map((entry) => (String(entry.id) === pendingId ? updatedDive : entry));
-          nextDrafts = {
-            ...nextDrafts,
-            [pendingId]: importDraftSeed(updatedDive)
-          };
-          updatedCount += 1;
-        }
-
-        this.dives = nextDives;
-        this.importDrafts = nextDrafts;
-        this.selectedImportId = this.resolvePendingImportId(nextDives, nextDrafts, id);
-
-        const appliedLabel = updateKeys.length === 2 ? "buddy and guide" : updateKeys[0];
-        this.importStatusMessage = `Applied ${appliedLabel} to ${updatedCount} imported ${updatedCount === 1 ? "dive" : "dives"}. Dive sites were left unchanged.`;
-        return true;
-      } catch (error) {
-        this.dives = nextDives;
-        this.importDrafts = nextDrafts;
-        this.importError = error.message || "Unable to apply buddy and guide across imported dives.";
-        return false;
-      } finally {
-        this.bulkImportSavePending = false;
-      }
+      return this.divesStore.applyBuddyGuideToPending(diveId, this.apiClient());
     },
     cycleView() {
       const currentView = this.activeView === "logs" ? "logs" : this.activeView;
@@ -1286,7 +809,7 @@ export default {
       this.cliAuthCode = state.cliAuthCode || "";
 
       if (this.activeView === "create") {
-        this.manualDiveError = "";
+        this.divesStore.state.manualDiveError = "";
       }
 
       if (this.activeView === "settings") {
@@ -1296,142 +819,51 @@ export default {
       }
     },
     async fetchDives() {
-      this.loading = true;
-      this.error = "";
-      try {
-        const healthResponse = await fetchHealth(this.apiClient());
-        this.backendHealthy = healthResponse.ok;
-        const diveResponse = await fetchDivesRequest(this.apiClient());
-        if (!diveResponse.ok) {
-          const payload = await diveResponse.json().catch(() => null);
-          throw new Error(payload?.error || `API returned ${diveResponse.status}`);
+      await this.divesStore.fetchDives(this.apiClient());
+      if (this.selectedDiveId) {
+        this.fetchSelectedDiveDetails(this.selectedDiveId);
+      }
+      if (this.selectedImportId && !this.isPendingImportId(this.selectedImportId, this.dives, this.importDrafts)) {
+        this.selectedImportId = null;
+        if (this.activeView === "imports") {
+          await this.navigateToAppRoute("/imports", { replace: true });
         }
-        const payload = await diveResponse.json();
-        this.dives = Array.isArray(payload.dives) ? payload.dives : [];
-        const apiStats = payload?.stats && typeof payload.stats === "object" ? payload.stats : null;
-        if (apiStats && typeof apiStats.totalSeconds === "number") {
-          this.dashboardStats = { ...this.dashboardStats, ...apiStats };
-        } else {
-          this.dashboardStats = { ...this.dashboardStats, ...summarizeDivesFallback(this.dives) };
+      }
+      if (
+        this.selectedEditDiveId &&
+        !this.dives.some((dive) => String(dive.id) === String(this.selectedEditDiveId) && isCommittedDive(dive))
+      ) {
+        this.selectedEditDiveId = null;
+        if (this.activeView === "edit") {
+          await this.navigateToAppRoute("/logs", { replace: true });
         }
-        this.syncImportDrafts();
-        if (this.selectedDiveId) {
-          this.fetchSelectedDiveDetails(this.selectedDiveId);
-        }
-        if (this.selectedImportId && !this.isPendingImportId(this.selectedImportId, this.dives, this.importDrafts)) {
-          this.selectedImportId = null;
-          if (this.activeView === "imports") {
-            await this.navigateToAppRoute("/imports", { replace: true });
-          }
-        }
-        if (
-          this.selectedEditDiveId &&
-          !this.dives.some((dive) => String(dive.id) === String(this.selectedEditDiveId) && isCommittedDive(dive))
-        ) {
-          this.selectedEditDiveId = null;
-          if (this.activeView === "edit") {
-            await this.navigateToAppRoute("/logs", { replace: true });
-          }
-        }
-      } catch (error) {
-        this.error = error.message || "Unknown frontend error";
-      } finally {
-        this.loading = false;
       }
     },
     async fetchSelectedDiveDetails(diveId) {
-      if (!diveId || !this.isAuthenticated) return;
-      const idStr = String(diveId);
-      const target = this.dives.find((d) => String(d.id) === idStr);
-      if (target && Array.isArray(target.samples) && target.samples.length > 0) {
-        return;
-      }
-      try {
-        const response = await fetchDiveRequest(this.apiClient(), idStr);
-        if (!response.ok) return;
-        const fullDive = await response.json();
-        if (fullDive && String(fullDive.id) === idStr) {
-          if (target) {
-            target.samples = Array.isArray(fullDive.samples) ? fullDive.samples : [];
-            if (fullDive.fields) target.fields = fullDive.fields;
-            if (typeof fullDive.sample_count === "number") target.sample_count = fullDive.sample_count;
-          } else if (this.dives.length > 0) {
-            this.dives.push(fullDive);
-          }
-        }
-      } catch (err) {
-        console.warn("Failed to fetch dive telemetry details", err);
-      }
+      return this.divesStore.fetchDiveDetail(diveId, this.apiClient());
     },
     async fetchProfileData() {
       try {
-        const response = await fetchProfile(this.apiClient());
-        const payload = await requireJson(response);
-        this.handleProfileUpdated(payload);
+        await this.profileStore.fetchProfile(this.apiClient());
       } catch {
-        this.profileDiveSites = [];
-        this.profileBuddies = [];
-        this.profileGuides = [];
-        this.profileLogbookDisplayFields = [];
-        this.profileEquipmentSelectionEnabled = true;
+        // Handled in store
       }
     },
     async fetchEquipment() {
       try {
-        const response = await fetchEquipmentRequest(this.apiClient());
-        const payload = await requireJson(response);
-        this.equipment = Array.isArray(payload?.equipment) ? payload.equipment : [];
-      } catch (error) {
-        this.equipment = [];
-        this.equipmentError = error?.message || "Unable to load equipment.";
+        await this.equipmentStore.fetchEquipment(this.apiClient());
+      } catch {
+        // Handled in store
       }
     },
     async saveEquipment(equipment) {
-      this.equipmentSaving = true;
-      this.equipmentError = "";
-      this.equipmentStatusMessage = "";
-      try {
-        const response = await saveEquipmentRequest(this.apiClient(), equipment);
-        const payload = await requireJson(response);
-        this.equipment = Array.isArray(payload?.equipment) ? payload.equipment : [];
-        this.equipmentStatusMessage = "Equipment inventory saved.";
-        return this.equipment;
-      } catch (error) {
-        this.equipmentError = error?.message || "Unable to save equipment.";
-        return false;
-      } finally {
-        this.equipmentSaving = false;
-      }
+      return this.equipmentStore.saveEquipment(equipment, this.apiClient());
     },
     async markEquipmentServiced(equipmentId) {
-      this.equipmentServicingId = String(equipmentId);
-      this.equipmentError = "";
-      this.equipmentStatusMessage = "";
-      try {
-        const response = await markEquipmentServicedRequest(this.apiClient(), equipmentId);
-        const payload = await requireJson(response);
-        const updated = payload?.equipment;
-        if (updated?.id) {
-          this.equipment = this.equipment.map((item) => (String(item.id) === String(updated.id) ? updated : item));
-        } else {
-          await this.fetchEquipment();
-        }
-        this.equipmentStatusMessage = "Equipment marked as serviced.";
-        return true;
-      } catch (error) {
-        this.equipmentError = error?.message || "Unable to mark equipment as serviced.";
-        return false;
-      } finally {
-        this.equipmentServicingId = null;
-      }
+      return this.equipmentStore.markServiced(equipmentId, this.apiClient());
     },
     handleProfileUpdated(payload) {
-      this.profileDiveSites = Array.isArray(payload?.dive_sites) ? payload.dive_sites : [];
-      this.profileBuddies = Array.isArray(payload?.buddies) ? payload.buddies : [];
-      this.profileGuides = Array.isArray(payload?.guides) ? payload.guides : [];
-      this.profileLogbookDisplayFields = Array.isArray(payload?.logbook_display_fields) ? payload.logbook_display_fields : [];
-      this.profileRequiredLogbookFields = normalizeRequiredLogbookFields(payload?.required_logbook_fields);
-      this.profileEquipmentSelectionEnabled = payload?.equipment_selection_enabled !== false;
+      this.profileStore.hydrateProfileState(payload);
     }
   },
   async mounted() {

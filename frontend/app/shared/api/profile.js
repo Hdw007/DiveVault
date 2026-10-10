@@ -12,10 +12,16 @@ export function searchGeocode(api, query) {
   return api.request(geocodeSearchUrl(query));
 }
 
-export function updateLicensePdf(api, licenseId, formData) {
+export function updateLicensePdf(api, licenseId, payload) {
+  const isFormData = typeof FormData !== "undefined" && payload instanceof FormData;
   return api.request(licensePdfUrl(licenseId), {
     method: "PUT",
-    body: formData
+    ...(isFormData
+      ? { body: payload }
+      : {
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        })
   });
 }
 

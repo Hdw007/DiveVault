@@ -1,41 +1,234 @@
 <script>
-import { settingsContextComputed, settingsContextMethods } from "./settings-context.js";
+import { LOCALES } from "~/i18n/locales.js";
+import { useAppPreferences } from "~/shared/composables/app-preferences.js";
+import { useProfileStore } from "~/shared/composables/use-profile-store.js";
+import { THEME_OPTIONS } from "~/shared/utils/settings-profile.js";
+import { logbookRequirementFieldOptions, normalizeRequiredLogbookFields } from "~/shared/utils/core.js";
+import packageJson from "../../../../package.json";
+
+const APP_VERSION = packageJson?.version || "0.0.0";
 
 export default {
   name: "ApplicationSettingsTab",
-  inject: ["settingsContext"],
+  props: {
+    currentLocale: {
+      type: String,
+      default: ""
+    },
+    setLocale: {
+      type: Function,
+      default: null
+    },
+    themePreference: {
+      type: String,
+      default: ""
+    },
+    resolvedTheme: {
+      type: String,
+      default: ""
+    },
+    setThemePreference: {
+      type: Function,
+      default: null
+    }
+  },
+  setup(props) {
+    const profileStore = useProfileStore();
+    const preferences = useAppPreferences();
+
+    return {
+      profileStore,
+      preferences,
+      props
+    };
+  },
+  data() {
+    return {
+      appVersion: APP_VERSION,
+      availableLanguages: LOCALES,
+      availableThemeOptions: THEME_OPTIONS,
+      publicSharingDraft: {
+        public_dives_enabled: false
+      },
+      selectedLocale: this.currentLocale || this.preferences.currentLocale || "en",
+      selectedThemePreference: this.themePreference || this.preferences.themePreference || "system"
+    };
+  },
   computed: {
-    ...settingsContextComputed([
-      "appVersion",
-      "availableLanguages",
-      "availableThemeOptions",
-      "hasUnsavedPublicSharingChanges",
-      "profileSaving",
-      "publicProfileUrl",
-      "publicSharingDraft",
-      "publicSharingSaving",
-      "resolvedTheme",
-      "selectedLocale",
-      "selectedThemePreference",
-      "settingsProfile"
-    ])
+    settingsProfile() {
+      return (
+        this.profileStore.profile || {
+          logbook_display_fields: [],
+          required_logbook_fields: ["site"],
+          equipment_selection_enabled: true
+        }
+      );
+    },
+    profileSaving() {
+      return this.profileStore.isSaving;
+    },
+    publicSharingSaving() {
+      return this.profileStore.isSaving;
+    },
+    hasUnsavedPublicSharingChanges() {
+      return Boolean(this.publicSharingDraft.public_dives_enabled) !== Boolean(this.settingsProfile.public_dives_enabled);
+    },
+    publicProfileUrl() {
+      if (typeof window === "undefined" || !this.settingsProfile.public_slug) return "";
+      return `${window.location.origin}/#diver/${this.settingsProfile.public_slug}`;
+    },
+    activeResolvedTheme() {
+      return this.resolvedTheme || this.preferences.resolvedTheme || "dark";
+    },
+    selectedThemeLabel() {
+      return (
+        this.availableThemeOptions.find((theme) => theme.value === this.selectedThemePreference)?.label || this.selectedThemePreference
+      );
+    }
+  },
+  watch: {
+    "settingsProfile.public_dives_enabled": {
+      immediate: true,
+      handler(val) {
+        this.publicSharingDraft.public_dives_enabled = Boolean(val);
+      }
+    },
+    currentLocale(val) {
+      if (val) this.selectedLocale = val;
+    },
+    themePreference(val) {
+      if (val) this.selectedThemePreference = val;
+    }
   },
   methods: {
-    ...settingsContextMethods([
-      "changePreferredLanguage",
-      "changeThemePreference",
-      "copyPublicProfileUrl",
-      "logbookFieldEnabled",
-      "optionalLogbookFieldOptions",
-      "requiredLogbookFieldEnabled",
-      "requiredLogbookFieldOptions",
-      "saveProfile",
-      "savePublicSharing",
-      "t",
-      "toggleEquipmentSelectionEnabled",
-      "toggleLogbookDisplayField",
-      "toggleRequiredLogbookField"
-    ])
+    t(key, fallback = key, params = {}) {
+      return this.preferences.t(key, fallback, params);
+    },
+    async changePreferredLanguage(value) {
+      const nextLocale = value?.target?.value || (typeof value === "string" ? value : this.selectedLocale);
+      this.selectedLocale = nextLocale;
+      if (typeof this.setLocale === "function") {
+        await this.setLocale(nextLocale);
+      } else {
+        await this.preferences.setLocale(nextLocale);
+      }
+      const label = this.availableLanguages.find((l) => l.value === nextLocale)?.label || nextLocale;
+      this.profileStore.state.statusMessage = `Language set to ${label}.`;
+    },
+    changeThemePreference() {
+      const nextTheme = this.selectedThemePreference;
+      if (typeof this.setThemePreference === "function") {
+        this.setThemePreference(nextTheme);
+      } else {
+        this.preferences.setThemePreference(nextTheme);
+      }
+      this.profileStore.state.statusMessage = this.t("Theme set to {theme}.", "Theme set to {theme}.", { theme: this.selectedThemeLabel });
+    },
+    async savePublicSharing() {
+      try {
+        await this.profileStore.updatePublicSharing(this.publicSharingDraft.public_dives_enabled);
+      } catch {
+        // Handled in profile store
+      }
+    },
+    async copyPublicProfileUrl() {
+      if (!this.publicProfileUrl || typeof navigator === "undefined" || !navigator.clipboard) return;
+      await navigator.clipboard.writeText(this.publicProfileUrl);
+      this.profileStore.state.statusMessage = "Public profile link copied to clipboard.";
+    },
+    optionalLogbookFieldOptions() {
+      return [
+        {
+          key: "weather_description",
+          label: this.t("settings.logLayout.weather", "Weather description"),
+          detail: this.t("settings.logLayout.weather.detail", "Show sea state and weather conditions in log rows.")
+        },
+        {
+          key: "visibility",
+          label: this.t("Visibility", "Visibility"),
+          detail: this.t("settings.logLayout.visibility.detail", "Show underwater visibility notes in log rows.")
+        },
+        {
+          key: "wetsuit_description",
+          label: this.t("settings.logLayout.wetsuit", "Wetsuit description"),
+          detail: this.t("settings.logLayout.wetsuit.detail", "Show exposure protection details in log rows.")
+        },
+        {
+          key: "weight_description",
+          label: this.t("settings.logLayout.weights", "Weights"),
+          detail: this.t("settings.logLayout.weights.detail", "Show weight configuration notes in log rows.")
+        }
+      ];
+    },
+    logbookFieldEnabled(key) {
+      return Array.isArray(this.settingsProfile.logbook_display_fields) && this.settingsProfile.logbook_display_fields.includes(key);
+    },
+    toggleLogbookDisplayField(key) {
+      const active = new Set(this.settingsProfile.logbook_display_fields || []);
+      if (active.has(key)) {
+        active.delete(key);
+      } else {
+        active.add(key);
+      }
+      const ordered = this.optionalLogbookFieldOptions()
+        .map((option) => option.key)
+        .filter((k) => active.has(k));
+      this.profileStore.state.profile.logbook_display_fields = ordered;
+    },
+    toggleEquipmentSelectionEnabled() {
+      this.profileStore.state.profile.equipment_selection_enabled = !this.settingsProfile.equipment_selection_enabled;
+    },
+    requiredLogbookFieldOptions() {
+      const detailByKey = {
+        site: this.t("settings.requiredLogbook.site.detail", "Require a dive site before a log entry can be completed."),
+        buddy: this.t("settings.requiredLogbook.buddy.detail", "Require a named buddy before a log entry can be completed."),
+        guide: this.t("settings.requiredLogbook.guide.detail", "Require a guide or instructor before a log entry can be completed."),
+        weather_description: this.t(
+          "settings.requiredLogbook.weather.detail",
+          "Require weather notes before a log entry can be completed."
+        ),
+        visibility: this.t("settings.requiredLogbook.visibility.detail", "Require visibility notes before a log entry can be completed."),
+        wetsuit_description: this.t(
+          "settings.requiredLogbook.wetsuit.detail",
+          "Require exposure protection notes before a log entry can be completed."
+        ),
+        weight_description: this.t(
+          "settings.requiredLogbook.weights.detail",
+          "Require weight configuration notes before a log entry can be completed."
+        ),
+        notes: this.t("settings.requiredLogbook.notes.detail", "Require general dive notes before a log entry can be completed.")
+      };
+      return logbookRequirementFieldOptions.map((field) => ({
+        ...field,
+        label: this.t(`settings.requiredLogbook.${field.key}`, field.label),
+        detail: detailByKey[field.key] || ""
+      }));
+    },
+    requiredLogbookFieldEnabled(key) {
+      return Array.isArray(this.settingsProfile.required_logbook_fields) && this.settingsProfile.required_logbook_fields.includes(key);
+    },
+    toggleRequiredLogbookField(key) {
+      const active = new Set(normalizeRequiredLogbookFields(this.settingsProfile.required_logbook_fields));
+      if (key === "site") {
+        active.add("site");
+      } else if (active.has(key)) {
+        active.delete(key);
+      } else {
+        active.add(key);
+      }
+      const ordered = this.requiredLogbookFieldOptions()
+        .map((option) => option.key)
+        .filter((k) => active.has(k));
+      this.profileStore.state.profile.required_logbook_fields = ordered;
+    },
+    async saveProfile() {
+      await this.profileStore.saveProfilePayload({
+        logbook_display_fields: this.settingsProfile.logbook_display_fields,
+        required_logbook_fields: this.settingsProfile.required_logbook_fields,
+        equipment_selection_enabled: this.settingsProfile.equipment_selection_enabled
+      });
+      this.profileStore.state.statusMessage = "Logbook preferences updated.";
+    }
   }
 };
 </script>
@@ -91,7 +284,7 @@ export default {
           </p>
         </div>
         <div class="settings-chip is-accent">
-          {{ resolvedTheme.toUpperCase() }}
+          {{ activeResolvedTheme.toUpperCase() }}
         </div>
       </div>
 
@@ -115,7 +308,7 @@ export default {
           <span>
             <span class="block font-label text-[10px] font-bold uppercase tracking-[0.18em]">{{ t(theme.label, theme.label) }}</span>
             <span v-if="theme.value === 'system'" class="mt-1 block text-xs opacity-80"
-              >{{ t("Currently", "Currently") }} {{ t(resolvedTheme === "light" ? "Light" : "Dark", resolvedTheme) }}</span
+              >{{ t("Currently", "Currently") }} {{ t(activeResolvedTheme === "light" ? "Light" : "Dark", activeResolvedTheme) }}</span
             >
           </span>
         </UButton>
@@ -203,7 +396,7 @@ export default {
             }}
           </p>
         </div>
-        <div class="settings-chip is-accent">{{ settingsProfile.logbook_display_fields.length }} {{ t("Enabled", "Enabled") }}</div>
+        <div class="settings-chip is-accent">{{ (settingsProfile.logbook_display_fields || []).length }} {{ t("Enabled", "Enabled") }}</div>
       </div>
 
       <div class="mt-6 grid gap-4 lg:grid-cols-3">
@@ -260,7 +453,9 @@ export default {
               }}
             </p>
           </div>
-          <div class="settings-chip is-accent">{{ settingsProfile.required_logbook_fields.length }} {{ t("Required", "Required") }}</div>
+          <div class="settings-chip is-accent">
+            {{ (settingsProfile.required_logbook_fields || []).length }} {{ t("Required", "Required") }}
+          </div>
         </div>
 
         <div class="mt-6 grid gap-4 lg:grid-cols-4">

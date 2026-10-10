@@ -1,68 +1,226 @@
 <script>
-import { settingsContextComputed, settingsContextMethods } from "./settings-context.js";
+import { defineAsyncComponent } from "vue";
+import { createApiClient } from "~/shared/api/client.js";
+import { useAuth, useUser } from "~/shared/composables/auth.js";
+import { useProfileStore } from "~/shared/composables/use-profile-store.js";
+import { useSettingsModals } from "~/shared/composables/use-settings-modals.js";
+import {
+  MAX_LICENSE_BYTES,
+  cloneLicenses,
+  formatBytes,
+  formatSettingsDateTime as formatDateTime
+} from "~/shared/utils/settings-profile.js";
+
+const LicensePdfPreview = defineAsyncComponent(() => import("~/shared/components/LicensePdfPreview.vue"));
 
 export default {
   name: "DiverDetailsTab",
-  inject: ["settingsContext"],
+  components: {
+    LicensePdfPreview
+  },
+  setup() {
+    const profileStore = useProfileStore();
+    const modals = useSettingsModals();
+    const { user } = useUser();
+    const { getToken } = useAuth();
+    const apiClient = createApiClient({ getToken: () => getToken({ skipCache: true }) });
+    const authenticatedFetch = (res, opts) => apiClient.request(res, opts);
+
+    return {
+      profileStore,
+      modals,
+      authUser: user,
+      authenticatedFetch
+    };
+  },
+  data() {
+    return {
+      isProfileEditing: false,
+      profileDraft: {
+        name: "",
+        email: ""
+      },
+      licenseFilter: "",
+      licenseDrafts: [],
+      editingLicenseIds: [],
+      expandedLicenseIds: [],
+      activeLicenseDocument: null,
+      activeLicensePreview: null,
+      pendingLicenseUploadId: null
+    };
+  },
   computed: {
-    ...settingsContextComputed([
-      "areLicensesEditing",
-      "currentUserEmail",
-      "currentUserName",
-      "hasUnsavedProfileChanges",
-      "isInteractionLocked",
-      "isProfileEditing",
-      "licenseDrafts",
-      "licenseFilter",
-      "licenses",
-      "licensesSaving",
-      "profileDraft",
-      "profileSaving",
-      "settingsProfile",
-      "visibleLicenses"
-    ])
+    settingsProfile() {
+      return this.profileStore.profile || {};
+    },
+    currentUserName() {
+      return this.authUser?.first_name || this.settingsProfile.name || "";
+    },
+    currentUserEmail() {
+      return this.authUser?.email || this.settingsProfile.email || "";
+    },
+    profileSaving() {
+      return this.profileStore.isSaving;
+    },
+    isInteractionLocked() {
+      return this.profileStore.isLoading || this.profileStore.isSaving;
+    },
+    hasUnsavedProfileChanges() {
+      const initialName = this.settingsProfile.name || this.currentUserName;
+      const initialEmail = this.settingsProfile.email || this.currentUserEmail;
+      return this.profileDraft.name !== initialName || this.profileDraft.email !== initialEmail;
+    },
+    licenses() {
+      return this.profileStore.licenses || [];
+    },
+    licensesSaving() {
+      return this.profileStore.isSaving;
+    },
+    areLicensesEditing() {
+      return this.editingLicenseIds.length > 0;
+    },
+    visibleLicenses() {
+      const source = this.areLicensesEditing ? this.licenseDrafts : this.licenses;
+      const filter = this.licenseFilter.trim().toLowerCase();
+      if (!filter) return source;
+      return source.filter(
+        (license) =>
+          (license.company || "").toLowerCase().includes(filter) ||
+          (license.certification_name || "").toLowerCase().includes(filter) ||
+          (license.student_number || "").toLowerCase().includes(filter)
+      );
+    }
+  },
+  watch: {
+    licenses: {
+      immediate: true,
+      handler(nextLicenses) {
+        if (!this.areLicensesEditing) {
+          this.licenseDrafts = cloneLicenses(nextLicenses);
+        }
+      }
+    }
   },
   methods: {
-    ...settingsContextMethods([
-      "addLicenseEntry",
-      "beginProfileEdit",
-      "cancelLicensesEdit",
-      "cancelProfileEdit",
-      "confirmRemoveLicenseItem",
-      "displayValue",
-      "editLicenseItem",
-      "formatBytes",
-      "formatDateTime",
-      "handleLicenseSelection",
-      "isLicenseEditing",
-      "isLicenseExpanded",
-      "isUploadingLicense",
-      "licenseExistsOnServer",
-      "licenseTitle",
-      "saveLicenses",
-      "saveProfile",
-      "viewLicensePdf"
-    ]),
+    formatBytes,
+    formatDateTime,
+    displayValue(value, fallback = "—") {
+      return value ? String(value).trim() || fallback : fallback;
+    },
+    beginProfileEdit() {
+      this.profileStore.clearStatus();
+      this.profileDraft = {
+        name: this.settingsProfile.name || this.currentUserName,
+        email: this.settingsProfile.email || this.currentUserEmail
+      };
+      this.isProfileEditing = true;
+    },
+    cancelProfileEdit() {
+      this.profileDraft = {
+        name: this.settingsProfile.name || this.currentUserName,
+        email: this.settingsProfile.email || this.currentUserEmail
+      };
+      this.isProfileEditing = false;
+    },
+    async saveProfile() {
+      await this.profileStore.saveProfileDetails(this.profileDraft);
+      this.isProfileEditing = false;
+    },
+    addLicenseEntry() {
+      this.modals.openCreateModal("license");
+    },
+    licenseTitle(license, index) {
+      return license.certification_name?.trim() || license.company?.trim() || `License ${index + 1}`;
+    },
+    isLicenseEditing(licenseId) {
+      return this.editingLicenseIds.includes(licenseId);
+    },
+    isLicenseExpanded(licenseId) {
+      return this.expandedLicenseIds.includes(licenseId);
+    },
+    editLicenseItem(licenseId) {
+      this.licenseDrafts = cloneLicenses(this.licenses);
+      this.editingLicenseIds = [licenseId];
+      if (!this.expandedLicenseIds.includes(licenseId)) {
+        this.expandedLicenseIds = [...this.expandedLicenseIds, licenseId];
+      }
+    },
+    cancelLicensesEdit() {
+      this.licenseDrafts = cloneLicenses(this.licenses);
+      this.editingLicenseIds = [];
+    },
+    async saveLicenses() {
+      await this.profileStore.saveLicenses(this.licenseDrafts);
+      this.editingLicenseIds = [];
+    },
+    confirmRemoveLicenseItem(licenseId) {
+      const license = this.licenseDrafts.find((l) => l.id === licenseId) || this.licenses.find((l) => l.id === licenseId);
+      const index = (this.areLicensesEditing ? this.licenseDrafts : this.licenses).findIndex((l) => l.id === licenseId);
+      const label = license ? this.licenseTitle(license, index) : "this license";
+
+      this.modals.openRemovalModal({
+        type: "license",
+        id: licenseId,
+        label,
+        onConfirm: async () => {
+          const nextLicenses = this.licenses.filter((l) => l.id !== licenseId);
+          await this.profileStore.saveLicenses(nextLicenses);
+          this.cancelLicensesEdit();
+        }
+      });
+    },
+    licenseExistsOnServer(licenseId) {
+      return this.licenses.some((license) => license.id === licenseId);
+    },
+    isUploadingLicense(licenseId) {
+      return this.profileStore.licenseUploadingId === licenseId;
+    },
     triggerLicensePicker(licenseId) {
-      const settings = this.settingsContext;
-      settings.profileError = "";
-      settings.profileStatus = "";
-
-      if (!settings.areLicensesEditing) {
-        settings.profileError = "Open license editing before uploading a PDF.";
+      this.profileStore.clearStatus();
+      if (!this.areLicensesEditing) {
+        this.profileStore.state.error = "Open license editing before uploading a PDF.";
         return;
       }
-      if (!settings.licenseExistsOnServer(licenseId)) {
-        settings.profileError = "Save the license list before uploading a PDF for a new entry.";
+      if (!this.licenseExistsOnServer(licenseId)) {
+        this.profileStore.state.error = "Save the license list before uploading a PDF for a new entry.";
         return;
       }
-      if (settings.hasUnsavedLicenseChanges()) {
-        settings.profileError = "Save license list changes before uploading a PDF.";
-        return;
-      }
-
-      settings.pendingLicenseUploadId = licenseId;
+      this.pendingLicenseUploadId = licenseId;
       this.$refs.licenseInput?.inputRef?.click();
+    },
+    async handleLicenseSelection(event) {
+      const file = event?.target?.files?.[0];
+      if (event?.target) {
+        event.target.value = "";
+      }
+      const licenseId = this.pendingLicenseUploadId;
+      this.pendingLicenseUploadId = null;
+      if (!file || !licenseId) return;
+
+      if (file.size > MAX_LICENSE_BYTES) {
+        this.profileStore.state.error = "License PDF must be 10 MB or smaller.";
+        return;
+      }
+      await this.profileStore.uploadLicense(licenseId, file);
+    },
+    viewLicensePdf(license) {
+      if (!license?.pdf?.preview_url) return;
+      this.activeLicenseDocument = license;
+      this.profileStore.clearStatus();
+    },
+    closeLicenseDocument() {
+      this.activeLicenseDocument = null;
+      this.activeLicensePreview = null;
+    },
+    openLicensePreview(page) {
+      this.activeLicensePreview = {
+        image: page.image,
+        filename: this.activeLicenseDocument?.pdf?.filename || "License PDF",
+        pageNumber: page.pageNumber || 1
+      };
+    },
+    closeLicensePreview() {
+      this.activeLicensePreview = null;
     }
   }
 };
@@ -307,5 +465,47 @@ export default {
     </div>
 
     <UInput ref="licenseInput" @change="handleLicenseSelection" type="file" accept="application/pdf,.pdf" class="hidden" />
+
+    <div
+      v-if="activeLicenseDocument"
+      @click.self="closeLicenseDocument"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-background/90 px-6 py-8 backdrop-blur-sm"
+    >
+      <div class="relative max-h-full w-full max-w-5xl overflow-auto border border-primary/15 bg-surface-container-low p-4 shadow-panel">
+        <div class="mb-4 flex items-start justify-between gap-4">
+          <div>
+            <p class="font-label text-[10px] font-bold uppercase tracking-[0.18em] text-primary">License PDF</p>
+            <p class="mt-1 text-sm text-secondary">{{ activeLicenseDocument.pdf?.filename || "License PDF" }}</p>
+          </div>
+          <UButton type="button" @click="closeLicenseDocument" class="settings-button settings-button-secondary"> Close </UButton>
+        </div>
+        <license-pdf-preview
+          :pdf="activeLicenseDocument.pdf"
+          :authenticated-fetch="authenticatedFetch"
+          @open-preview="openLicensePreview($event)"
+        />
+      </div>
+    </div>
+
+    <div
+      v-if="activeLicensePreview"
+      @click.self="closeLicensePreview"
+      class="fixed inset-0 z-[55] flex items-center justify-center bg-background/90 px-6 py-8 backdrop-blur-sm"
+    >
+      <div class="relative max-h-full w-full max-w-5xl overflow-auto border border-primary/15 bg-surface-container-low p-4 shadow-panel">
+        <div class="mb-4 flex items-start justify-between gap-4">
+          <div>
+            <p class="font-label text-[10px] font-bold uppercase tracking-[0.18em] text-primary">License Preview</p>
+            <p class="mt-1 text-sm text-secondary">{{ activeLicensePreview.filename }} - Page {{ activeLicensePreview.pageNumber }}</p>
+          </div>
+          <UButton type="button" @click="closeLicensePreview" class="settings-button settings-button-secondary"> Close </UButton>
+        </div>
+        <img
+          :src="activeLicensePreview.image"
+          :alt="activeLicensePreview.filename"
+          class="mx-auto max-h-[80vh] w-auto max-w-full bg-white"
+        />
+      </div>
+    </div>
   </div>
 </template>

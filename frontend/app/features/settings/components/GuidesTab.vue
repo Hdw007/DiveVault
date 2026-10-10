@@ -1,30 +1,93 @@
 <script>
-import { settingsContextComputed, settingsContextMethods } from "./settings-context.js";
+import { useProfileStore } from "~/shared/composables/use-profile-store.js";
+import { useSettingsModals } from "~/shared/composables/use-settings-modals.js";
+import { cloneGuides } from "~/shared/utils/settings-profile.js";
 
 export default {
   name: "GuidesTab",
-  inject: ["settingsContext"],
+  setup() {
+    const profileStore = useProfileStore();
+    const modals = useSettingsModals();
+    return {
+      profileStore,
+      modals
+    };
+  },
+  data() {
+    return {
+      guideFilter: "",
+      guideDrafts: [],
+      editingGuideIds: []
+    };
+  },
   computed: {
-    ...settingsContextComputed([
-      "areGuidesEditing",
-      "guideDrafts",
-      "guideFilter",
-      "guides",
-      "guidesSaving",
-      "isInteractionLocked",
-      "visibleGuides"
-    ])
+    guides() {
+      return this.profileStore.guides || [];
+    },
+    guidesSaving() {
+      return this.profileStore.isSaving;
+    },
+    isInteractionLocked() {
+      return this.profileStore.isLoading || this.profileStore.isSaving;
+    },
+    areGuidesEditing() {
+      return this.editingGuideIds.length > 0;
+    },
+    visibleGuides() {
+      const source = this.areGuidesEditing ? this.guideDrafts : this.guides;
+      const filter = this.guideFilter.trim().toLowerCase();
+      if (!filter) return source;
+      return source.filter((guide) => (guide.name || "").toLowerCase().includes(filter));
+    }
+  },
+  watch: {
+    guides: {
+      immediate: true,
+      handler(nextGuides) {
+        if (!this.areGuidesEditing) {
+          this.guideDrafts = cloneGuides(nextGuides);
+        }
+      }
+    }
   },
   methods: {
-    ...settingsContextMethods([
-      "addGuideEntry",
-      "cancelGuidesEdit",
-      "confirmRemoveGuideItem",
-      "editGuideItem",
-      "guideTitle",
-      "isGuideEditing",
-      "saveGuides"
-    ])
+    addGuideEntry() {
+      this.modals.openCreateModal("guide");
+    },
+    guideTitle(guide, index) {
+      return guide.name?.trim() || `Guide ${index + 1}`;
+    },
+    isGuideEditing(guideId) {
+      return this.editingGuideIds.includes(guideId);
+    },
+    editGuideItem(guideId) {
+      this.guideDrafts = cloneGuides(this.guides);
+      this.editingGuideIds = [guideId];
+    },
+    cancelGuidesEdit() {
+      this.guideDrafts = cloneGuides(this.guides);
+      this.editingGuideIds = [];
+    },
+    async saveGuides() {
+      await this.profileStore.saveGuides(this.guideDrafts);
+      this.editingGuideIds = [];
+    },
+    confirmRemoveGuideItem(guideId) {
+      const guide = this.guideDrafts.find((g) => g.id === guideId) || this.guides.find((g) => g.id === guideId);
+      const index = (this.areGuidesEditing ? this.guideDrafts : this.guides).findIndex((g) => g.id === guideId);
+      const label = guide ? this.guideTitle(guide, index) : "this guide";
+
+      this.modals.openRemovalModal({
+        type: "guide",
+        id: guideId,
+        label,
+        onConfirm: async () => {
+          const nextGuides = this.guides.filter((g) => g.id !== guideId);
+          await this.profileStore.saveGuides(nextGuides);
+          this.cancelGuidesEdit();
+        }
+      });
+    }
   }
 };
 </script>
