@@ -6,11 +6,24 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 )
+
+type DiverStats struct {
+	TotalDives             int     `json:"totalDives"`
+	TotalSeconds           int64   `json:"totalSeconds"`
+	TotalHours             float64 `json:"totalHours"`
+	MaxDepth               float64 `json:"maxDepth"`
+	TotalBarConsumed       int     `json:"totalBarConsumed"`
+	AverageDurationSeconds float64 `json:"averageDurationSeconds"`
+	AverageMaxDepth        float64 `json:"averageMaxDepth"`
+	BottomTimeProgress     int     `json:"bottomTimeProgress"`
+	ImportedCount          int     `json:"importedCount"`
+}
 
 type DeviceState struct {
 	UserID         string  `json:"user_id,omitempty"`
@@ -163,6 +176,135 @@ func (db *DB) ListAllDives(ctx context.Context, userID string, includeSamples bo
 	}
 	defer rows.Close()
 	return scanDives(rows, includeSamples, includeRawData)
+}
+
+func (db *DB) GetDiverStats(ctx context.Context, userID string) (*DiverStats, error) {
+	if db == nil || db.pool == nil {
+		return &DiverStats{}, nil
+	}
+	query := `
+WITH user_dives AS (
+    SELECT
+        id,
+        duration_seconds,
+        duration_ms,
+        max_depth_m,
+        fields_json,
+        import_payload_json,
+        (COALESCE(fields_json->'logbook'->>'status', import_payload_json->'fields'->'logbook'->>'status', '') = 'complete') AS is_complete
+    FROM dives
+    WHERE user_id = $1
+),
+counts AS (
+    SELECT
+        COUNT(*) AS total_count,
+        COUNT(*) FILTER (WHERE is_complete) AS complete_count,
+        COUNT(*) FILTER (WHERE NOT is_complete) AS imported_count
+    FROM user_dives
+),
+target_dives AS (
+    SELECT d.*
+    FROM user_dives d, counts c
+    WHERE (c.complete_count > 0 AND d.is_complete)
+       OR (c.complete_count = 0)
+)
+SELECT
+    c.imported_count,
+    COUNT(t.id) AS target_count,
+    COALESCE(SUM(
+        CASE
+            WHEN t.duration_seconds IS NOT NULL AND t.duration_seconds > 0 THEN t.duration_seconds
+            WHEN t.duration_ms IS NOT NULL AND t.duration_ms > 0 THEN t.duration_ms / 1000
+            ELSE 0
+        END
+    ), 0)::bigint AS total_seconds,
+    COALESCE(MAX(t.max_depth_m), 0.0)::double precision AS max_depth,
+    COALESCE(SUM(t.max_depth_m), 0.0)::double precision AS sum_depth,
+    COALESCE(SUM(
+        CASE
+            WHEN (
+                TRIM(COALESCE(
+                    NULLIF(t.fields_json->'tanks'->0->>'beginpressure_bar', ''),
+                    NULLIF(t.fields_json->'tanks'->0->>'begin_pressure_bar', ''),
+                    NULLIF(t.import_payload_json->'fields'->'tanks'->0->>'beginpressure_bar', ''),
+                    NULLIF(t.import_payload_json->'fields'->'tanks'->0->>'begin_pressure_bar', '')
+                )) ~ '^[0-9]+(\.[0-9]+)?$'
+                AND
+                TRIM(COALESCE(
+                    NULLIF(t.fields_json->'tanks'->0->>'endpressure_bar', ''),
+                    NULLIF(t.fields_json->'tanks'->0->>'end_pressure_bar', ''),
+                    NULLIF(t.import_payload_json->'fields'->'tanks'->0->>'endpressure_bar', ''),
+                    NULLIF(t.import_payload_json->'fields'->'tanks'->0->>'end_pressure_bar', '')
+                )) ~ '^[0-9]+(\.[0-9]+)?$'
+            THEN GREATEST(0.0::numeric, ROUND(
+                (TRIM(COALESCE(
+                    NULLIF(t.fields_json->'tanks'->0->>'beginpressure_bar', ''),
+                    NULLIF(t.fields_json->'tanks'->0->>'begin_pressure_bar', ''),
+                    NULLIF(t.import_payload_json->'fields'->'tanks'->0->>'beginpressure_bar', ''),
+                    NULLIF(t.import_payload_json->'fields'->'tanks'->0->>'begin_pressure_bar', '')
+                )))::numeric
+                -
+                (TRIM(COALESCE(
+                    NULLIF(t.fields_json->'tanks'->0->>'endpressure_bar', ''),
+                    NULLIF(t.fields_json->'tanks'->0->>'end_pressure_bar', ''),
+                    NULLIF(t.import_payload_json->'fields'->'tanks'->0->>'endpressure_bar', ''),
+                    NULLIF(t.import_payload_json->'fields'->'tanks'->0->>'end_pressure_bar', '')
+                )))::numeric
+            ))
+            ELSE 0.0::numeric
+        END
+    ), 0.0)::double precision AS total_bar_consumed
+FROM counts c
+LEFT JOIN target_dives t ON true
+GROUP BY c.imported_count
+`
+	var importedCount int
+	var targetCount int
+	var totalSeconds int64
+	var maxDepth float64
+	var sumDepth float64
+	var totalBarConsumed float64
+
+	err := db.pool.QueryRow(ctx, query, cleanText(userID)).Scan(
+		&importedCount,
+		&targetCount,
+		&totalSeconds,
+		&maxDepth,
+		&sumDepth,
+		&totalBarConsumed,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return &DiverStats{}, nil
+		}
+		return nil, err
+	}
+
+	var averageDurationSeconds float64
+	var averageMaxDepth float64
+	if targetCount > 0 {
+		averageDurationSeconds = math.Round((float64(totalSeconds)/float64(targetCount))*100) / 100
+		averageMaxDepth = math.Round((sumDepth/float64(targetCount))*100) / 100
+	}
+
+	var totalHours float64
+	if totalSeconds > 0 {
+		totalHours = math.Round((float64(totalSeconds)/3600.0)*10) / 10
+	}
+
+	bottomTimeProgress := int(math.Min(100, math.Round(totalHours)))
+
+	return &DiverStats{
+		TotalDives:             targetCount,
+		TotalSeconds:           totalSeconds,
+		TotalHours:             totalHours,
+		MaxDepth:               maxDepth,
+		TotalBarConsumed:       int(totalBarConsumed),
+		AverageDurationSeconds: averageDurationSeconds,
+		AverageMaxDepth:        averageMaxDepth,
+		BottomTimeProgress:     bottomTimeProgress,
+		ImportedCount:          importedCount,
+	}, nil
 }
 
 func (db *DB) GetDive(ctx context.Context, userID string, diveID int64, includeRawData bool) (*Dive, error) {
