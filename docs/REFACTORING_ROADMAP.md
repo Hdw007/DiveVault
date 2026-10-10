@@ -86,23 +86,24 @@ Status Legend:
 ### Phase 2: Unified Dive Form & Shared Component Architecture
 *Goal: Eliminate triplication of dive editing logic and standardize form validations.*
 
-- [ ] **2.1 Shared Dive Form Draft Composable**
+- [x] **2.1 Shared Dive Form Draft Composable**
   - Create `frontend/app/shared/composables/use-dive-form.js` to encapsulate:
     - Validation logic (duration, depth, pressure ranges, required fields).
     - Autocomplete selection and inline site/buddy creation state.
     - Gas mix and equipment payload formatting.
-- [ ] **2.2 Unified `DiveForm` Component**
-  - Create `frontend/app/shared/components/dive-form/DiveForm.vue` containing the shared fields:
+- [x] **2.2 Unified `DiveForm` Component**
+  - Create `frontend/app/shared/components/dive-form/DiveFormFields.vue` containing the shared fields:
     - Date, time, duration, depths.
     - Site autocomplete with map preview.
     - Buddy, guide, and equipment selectors.
     - Tank volume, start/end pressure, gas mix, weights, and conditions.
-- [ ] **2.3 Refactor Form Consumers**
+- [x] **2.3 Refactor Form Consumers**
   - Migrate `ManualDive.vue` to use the unified component.
   - Migrate `ImportEdit.vue` to use the unified component.
   - Migrate `LogbookEdit.vue` to use the unified component.
-- [ ] **2.4 Verification**
+- [x] **2.4 Verification**
   - Verify dive creation, import staging, and logbook updates across all test suites.
+  - Fix tank pressure persistence bug in backend and frontend.
 
 ---
 
