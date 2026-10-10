@@ -43,6 +43,26 @@ test("renders login flows with the local auth screen", async ({ page }, testInfo
   await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
 });
 
+test("signs in using the Enter key in the login form", async ({ page }) => {
+  await installAppMocks(page, {
+    signedIn: false,
+    authStatus: {
+      initialized: true,
+      bootstrap_registration_open: false,
+      public_registration_enabled: false,
+      public_registration_open: false
+    }
+  });
+  await gotoAndWait(page);
+
+  await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
+  await page.getByPlaceholder("Email").fill("avery@example.com");
+  await page.getByPlaceholder("Password").fill("Password123!");
+  await page.getByPlaceholder("Password").press("Enter");
+
+  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+});
+
 test("maintains high contrast input font on auth screen under light and dark theme", async ({ page }) => {
   await installAppMocks(page, {
     signedIn: false,

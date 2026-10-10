@@ -124,6 +124,13 @@ export default {
         await this.setLocale(locale);
       }
     },
+    async handleSubmit() {
+      if (this.authView === AUTH_VIEW_REGISTER) {
+        await this.submitRegister();
+      } else {
+        await this.submitSignIn();
+      }
+    },
     async submitSignIn() {
       this.loading = true;
       this.error = "";
@@ -237,91 +244,93 @@ export default {
             {{ error }}
           </div>
 
-          <div class="relative mt-6 space-y-4 sm:mt-8 sm:space-y-5">
-            <label class="block space-y-2">
-              <span class="font-label text-[0.65rem] font-bold uppercase tracking-[0.18em] text-secondary">Email</span>
-              <UInput
-                v-model.trim="email"
-                type="email"
-                autocomplete="email"
-                placeholder="Email"
-                class="auth-input w-full rounded-2xl border border-primary/12 px-4 py-3 text-sm text-on-surface outline-none transition-all placeholder:text-secondary/45 sm:py-3.5"
-              />
-            </label>
+          <form @submit.prevent="handleSubmit">
+            <div class="relative mt-6 space-y-4 sm:mt-8 sm:space-y-5">
+              <label class="block space-y-2">
+                <span class="font-label text-[0.65rem] font-bold uppercase tracking-[0.18em] text-secondary">Email</span>
+                <UInput
+                  v-model.trim="email"
+                  type="email"
+                  autocomplete="email"
+                  placeholder="Email"
+                  class="auth-input w-full rounded-2xl border border-primary/12 px-4 py-3 text-sm text-on-surface outline-none transition-all placeholder:text-secondary/45 sm:py-3.5"
+                />
+              </label>
 
-            <div class="space-y-2">
-              <div class="flex items-center justify-between gap-3">
-                <span class="font-label text-[0.65rem] font-bold uppercase tracking-[0.18em] text-secondary">Password</span>
-                <UButton
-                  @click="showPassword = !showPassword"
-                  type="button"
-                  class="text-[0.65rem] font-semibold uppercase tracking-[0.16em] text-primary transition-colors hover:text-white"
-                >
-                  {{ showPassword ? "Hide" : "Show" }}
-                </UButton>
+              <div class="space-y-2">
+                <div class="flex items-center justify-between gap-3">
+                  <span class="font-label text-[0.65rem] font-bold uppercase tracking-[0.18em] text-secondary">Password</span>
+                  <UButton
+                    @click="showPassword = !showPassword"
+                    type="button"
+                    class="text-[0.65rem] font-semibold uppercase tracking-[0.16em] text-primary transition-colors hover:text-white"
+                  >
+                    {{ showPassword ? "Hide" : "Show" }}
+                  </UButton>
+                </div>
+                <UInput
+                  v-model="password"
+                  :type="showPassword ? 'text' : 'password'"
+                  autocomplete="current-password"
+                  placeholder="Password"
+                  class="auth-input w-full rounded-2xl border border-primary/12 px-4 py-3 text-sm text-on-surface outline-none transition-all placeholder:text-secondary/45 sm:py-3.5"
+                />
               </div>
-              <UInput
-                v-model="password"
-                :type="showPassword ? 'text' : 'password'"
-                autocomplete="current-password"
-                placeholder="Password"
-                class="auth-input w-full rounded-2xl border border-primary/12 px-4 py-3 text-sm text-on-surface outline-none transition-all placeholder:text-secondary/45 sm:py-3.5"
-              />
+
+              <template v-if="authView === 'register'">
+                <div class="grid gap-5 sm:grid-cols-2">
+                  <label class="block space-y-2">
+                    <span class="font-label text-[0.65rem] font-bold uppercase tracking-[0.18em] text-secondary">First Name</span>
+                    <UInput
+                      v-model.trim="firstName"
+                      type="text"
+                      autocomplete="given-name"
+                      placeholder="First name"
+                      class="auth-input w-full rounded-2xl border border-primary/12 px-4 py-3 text-sm text-on-surface outline-none transition-all placeholder:text-secondary/45 sm:py-3.5"
+                    />
+                  </label>
+                  <label class="block space-y-2">
+                    <span class="font-label text-[0.65rem] font-bold uppercase tracking-[0.18em] text-secondary">Last Name</span>
+                    <UInput
+                      v-model.trim="lastName"
+                      type="text"
+                      autocomplete="family-name"
+                      placeholder="Last name"
+                      class="auth-input w-full rounded-2xl border border-primary/12 px-4 py-3 text-sm text-on-surface outline-none transition-all placeholder:text-secondary/45 sm:py-3.5"
+                    />
+                  </label>
+                </div>
+              </template>
             </div>
 
-            <template v-if="authView === 'register'">
-              <div class="grid gap-5 sm:grid-cols-2">
-                <label class="block space-y-2">
-                  <span class="font-label text-[0.65rem] font-bold uppercase tracking-[0.18em] text-secondary">First Name</span>
-                  <UInput
-                    v-model.trim="firstName"
-                    type="text"
-                    autocomplete="given-name"
-                    placeholder="First name"
-                    class="auth-input w-full rounded-2xl border border-primary/12 px-4 py-3 text-sm text-on-surface outline-none transition-all placeholder:text-secondary/45 sm:py-3.5"
-                  />
-                </label>
-                <label class="block space-y-2">
-                  <span class="font-label text-[0.65rem] font-bold uppercase tracking-[0.18em] text-secondary">Last Name</span>
-                  <UInput
-                    v-model.trim="lastName"
-                    type="text"
-                    autocomplete="family-name"
-                    placeholder="Last name"
-                    class="auth-input w-full rounded-2xl border border-primary/12 px-4 py-3 text-sm text-on-surface outline-none transition-all placeholder:text-secondary/45 sm:py-3.5"
-                  />
-                </label>
-              </div>
-            </template>
-          </div>
-
-          <div class="relative mt-6 flex flex-col gap-3 sm:mt-8 sm:flex-row">
-            <UButton
-              v-if="authView === 'signin'"
-              @click="submitSignIn"
-              :disabled="loading"
-              class="auth-button-glow auth-primary-button inline-flex min-h-12 flex-1 items-center justify-center rounded-2xl px-5 py-3 font-label text-[0.68rem] font-bold uppercase tracking-[0.18em] text-on-primary transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-70 sm:min-h-13 sm:py-3.5 sm:text-[0.7rem] sm:tracking-[0.2em]"
-            >
-              {{ submitLabel }}
-            </UButton>
-            <UButton
-              v-if="authView === 'register'"
-              @click="submitRegister"
-              :disabled="loading"
-              class="auth-button-glow auth-primary-button inline-flex min-h-12 flex-1 items-center justify-center rounded-2xl px-5 py-3 font-label text-[0.68rem] font-bold uppercase tracking-[0.18em] text-on-primary transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-70 sm:min-h-13 sm:py-3.5 sm:text-[0.7rem] sm:tracking-[0.2em]"
-            >
-              {{ submitLabel }}
-            </UButton>
-            <UButton
-              v-if="canRegister"
-              :key="'auth-toggle-' + authView"
-              @click="authView = authView === 'signin' ? 'register' : 'signin'"
-              type="button"
-              class="inline-flex min-h-12 items-center justify-center rounded-2xl border border-primary/14 bg-surface-container-high/40 px-5 py-3 font-label text-[0.68rem] font-bold uppercase tracking-[0.16em] text-primary transition-colors hover:bg-surface-container-high/70 hover:text-white sm:min-h-13 sm:py-3.5 sm:text-[0.7rem] sm:tracking-[0.18em]"
-            >
-              {{ alternateActionLabel }}
-            </UButton>
-          </div>
+            <div class="relative mt-6 flex flex-col gap-3 sm:mt-8 sm:flex-row">
+              <UButton
+                v-if="authView === 'signin'"
+                type="submit"
+                :disabled="loading"
+                class="auth-button-glow auth-primary-button inline-flex min-h-12 flex-1 items-center justify-center rounded-2xl px-5 py-3 font-label text-[0.68rem] font-bold uppercase tracking-[0.18em] text-on-primary transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-70 sm:min-h-13 sm:py-3.5 sm:text-[0.7rem] sm:tracking-[0.2em]"
+              >
+                {{ submitLabel }}
+              </UButton>
+              <UButton
+                v-if="authView === 'register'"
+                type="submit"
+                :disabled="loading"
+                class="auth-button-glow auth-primary-button inline-flex min-h-12 flex-1 items-center justify-center rounded-2xl px-5 py-3 font-label text-[0.68rem] font-bold uppercase tracking-[0.18em] text-on-primary transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-70 sm:min-h-13 sm:py-3.5 sm:text-[0.7rem] sm:tracking-[0.2em]"
+              >
+                {{ submitLabel }}
+              </UButton>
+              <UButton
+                v-if="canRegister"
+                :key="'auth-toggle-' + authView"
+                @click="authView = authView === 'signin' ? 'register' : 'signin'"
+                type="button"
+                class="inline-flex min-h-12 items-center justify-center rounded-2xl border border-primary/14 bg-surface-container-high/40 px-5 py-3 font-label text-[0.68rem] font-bold uppercase tracking-[0.16em] text-primary transition-colors hover:bg-surface-container-high/70 hover:text-white sm:min-h-13 sm:py-3.5 sm:text-[0.7rem] sm:tracking-[0.18em]"
+              >
+                {{ alternateActionLabel }}
+              </UButton>
+            </div>
+          </form>
 
           <div v-if="showAlternateAccountPrompt" class="relative mt-4 flex flex-wrap items-center gap-2 text-xs text-secondary sm:mt-5">
             <span>{{ alternateActionCopy }}</span>
