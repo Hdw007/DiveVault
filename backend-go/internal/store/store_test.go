@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -183,6 +184,60 @@ func TestUpdateTanksFromPayload(t *testing.T) {
 	tanksUnchanged := originalFields["tanks"].([]any)
 	if len(tanksUnchanged) != 1 || tanksUnchanged[0].(map[string]any)["volume"] != 10.0 {
 		t.Errorf("expected tanks untouched, got %v", tanksUnchanged)
+	}
+}
+
+func TestDiverStatsJSONSerialization(t *testing.T) {
+	stats := DiverStats{
+		TotalDives:             12,
+		TotalSeconds:           36000,
+		TotalHours:             10.0,
+		MaxDepth:               28.5,
+		TotalBarConsumed:       1500,
+		AverageDurationSeconds: 3000.0,
+		AverageMaxDepth:        22.1,
+		BottomTimeProgress:     10,
+		ImportedCount:          3,
+	}
+
+	data, err := json.Marshal(stats)
+	if err != nil {
+		t.Fatalf("marshal DiverStats failed: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("unmarshal DiverStats failed: %v", err)
+	}
+
+	if parsed["totalDives"] != float64(12) {
+		t.Errorf("expected totalDives=12, got %v", parsed["totalDives"])
+	}
+	if parsed["totalSeconds"] != float64(36000) {
+		t.Errorf("expected totalSeconds=36000, got %v", parsed["totalSeconds"])
+	}
+	if parsed["totalHours"] != 10.0 {
+		t.Errorf("expected totalHours=10.0, got %v", parsed["totalHours"])
+	}
+	if parsed["maxDepth"] != 28.5 {
+		t.Errorf("expected maxDepth=28.5, got %v", parsed["maxDepth"])
+	}
+	if parsed["totalBarConsumed"] != float64(1500) {
+		t.Errorf("expected totalBarConsumed=1500, got %v", parsed["totalBarConsumed"])
+	}
+	if parsed["importedCount"] != float64(3) {
+		t.Errorf("expected importedCount=3, got %v", parsed["importedCount"])
+	}
+}
+
+func TestGetDiverStatsNilDB(t *testing.T) {
+	var db *DB
+	stats, err := db.GetDiverStats(nil, "user-1")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if stats == nil || stats.TotalDives != 0 {
+		t.Fatalf("expected empty stats with TotalDives=0, got %v", stats)
 	}
 }
 

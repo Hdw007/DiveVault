@@ -71,18 +71,31 @@ func handleDivesGet(ctx *Context) {
 		writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusServiceUnavailable, map[string]string{"error": "Database unavailable: " + err.Error()})
 		return
 	}
-	completeDives := make([]store.Dive, 0, len(dives))
-	for _, dive := range dives {
-		if isLogbookComplete(dive) {
-			completeDives = append(completeDives, dive)
+	stats, err := db.GetDiverStats(ctx.Request.Context(), ctx.PrincipalID)
+	if err != nil {
+		completeDives := make([]store.Dive, 0, len(dives))
+		for _, dive := range dives {
+			if isLogbookComplete(dive) {
+				completeDives = append(completeDives, dive)
+			}
 		}
+		importedCount := len(dives) - len(completeDives)
+		targetDives := completeDives
+		if len(completeDives) == 0 && len(dives) > 0 {
+			targetDives = dives
+		}
+		writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusOK, map[string]any{"dives": dives, "stats": summarizeDives(targetDives), "imported_count": importedCount, "limit": limit, "offset": offset, "total": total})
+		return
 	}
-	importedCount := len(dives) - len(completeDives)
-	targetDives := completeDives
-	if len(completeDives) == 0 && len(dives) > 0 {
-		targetDives = dives
-	}
-	writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusOK, map[string]any{"dives": dives, "stats": summarizeDives(targetDives), "imported_count": importedCount, "limit": limit, "offset": offset, "total": total})
+
+	writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusOK, map[string]any{
+		"dives":          dives,
+		"stats":          stats,
+		"imported_count": stats.ImportedCount,
+		"limit":          limit,
+		"offset":         offset,
+		"total":          total,
+	})
 }
 
 func handleDiveGet(ctx *Context) {
