@@ -131,8 +131,9 @@ Status Legend:
 ### Phase 4: Backend Refinements & Future Features
 *Goal: Leverage relational capabilities, fast aggregates, and robust synchronization.*
 
-- [ ] **4.1 SQL Statistics Aggregation**
+- [x] **4.1 SQL Statistics Aggregation (Phase 4A)**
   - Create a dedicated database query using PostgreSQL aggregates (`COUNT(*)`, `SUM(duration_seconds)`, `MAX(max_depth_m)`, `AVG(max_depth_m)`) rather than loading and summing dives in Go memory.
+  - Implement `GetDiverStats(ctx, userID)` in `backend-go/internal/store/domain.go` to compute lifetime dashboard totals accurately across paginated lists.
 - [ ] **4.2 Standardized API Errors**
   - Introduce structured error payloads (`{ "error": { "code": "...", "message": "..." } }`) across all endpoints.
 - [ ] **4.3 Importer Robustness**
