@@ -134,12 +134,15 @@ Status Legend:
 - [x] **4.1 SQL Statistics Aggregation (Phase 4A)**
   - Create a dedicated database query using PostgreSQL aggregates (`COUNT(*)`, `SUM(duration_seconds)`, `MAX(max_depth_m)`, `AVG(max_depth_m)`) rather than loading and summing dives in Go memory.
   - Implement `GetDiverStats(ctx, userID)` in `backend-go/internal/store/domain.go` to compute lifetime dashboard totals accurately across paginated lists.
-- [ ] **4.2 Standardized API Errors**
+- [x] **4.2 Native Nuxt Page Routing & Shell Modernization (Phase 4B)**
+  - Fully eliminate simulated router monolith (`AppRouteController.vue` & `NuxtRouteShell.vue`).
+  - Introduce native Nuxt 4 `app/pages/` hierarchy for all routes and `app/layouts/default.vue` application shell.
+  - Extract reusable composables `useAppShell` and `useAppNavigation` with backward-compatible global hash redirect middleware.
+  - 100% verified across Chromium, Firefox, and WebKit (54/54 tests passing).
+- [ ] **4.3 Standardized API Errors**
   - Introduce structured error payloads (`{ "error": { "code": "...", "message": "..." } }`) across all endpoints.
-- [ ] **4.3 Importer Robustness**
+- [ ] **4.4 Importer Robustness**
   - Standardize timezone handling and deduplication hashing across Subsurface XML and CSV imports.
-- [ ] **4.4 Future Fork Features**
-  - Desktop sync improvements (DiveVault CLI integration).
-  - Multi-gas profile visualization.
-  - Enhanced export options (Fit/UDDF).
+- [ ] **4.5 Relational Schema Modeling & Logbook Normalization (Phase 4C)**
+  - Relational foreign keys for dive sites and join table for buddies.
 
