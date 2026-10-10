@@ -16,7 +16,8 @@ export default [
       globals: {
         ...globals.browser,
         ...globals.node,
-        defineNuxtPlugin: "readonly"
+        defineNuxtPlugin: "readonly",
+        definePageMeta: "readonly"
       }
     },
     rules: {

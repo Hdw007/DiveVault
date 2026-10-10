@@ -68,18 +68,26 @@ function attachSystemThemeListener(app) {
   }
 }
 
-function detachSystemThemeListener(app) {
-  if (typeof app.themeMediaQuery?.removeEventListener === "function") {
-    app.themeMediaQuery.removeEventListener("change", app.syncSystemTheme);
+function detachSystemThemeListener(app = preferenceState) {
+  const query = app.themeMediaQuery || app.state?.themeMediaQuery;
+  const syncFn = app.syncSystemTheme || (() => syncSystemTheme(app));
+  if (typeof query?.removeEventListener === "function") {
+    query.removeEventListener("change", syncFn);
   } else {
-    app.themeMediaQuery?.removeListener?.(app.syncSystemTheme);
+    query?.removeListener?.(syncFn);
   }
 }
 
-async function initializePreferences(app) {
-  await app.setLocale(getStoredLocale(SUPPORTED_LOCALES) || getBrowserLocale(SUPPORTED_LOCALES));
-  app.setThemePreference(getStoredThemePreference());
-  attachSystemThemeListener(app);
+async function initializePreferences(app = preferenceState) {
+  if (typeof app.setLocale === "function") {
+    await app.setLocale(getStoredLocale(SUPPORTED_LOCALES) || getBrowserLocale(SUPPORTED_LOCALES));
+    app.setThemePreference(getStoredThemePreference());
+    attachSystemThemeListener(app);
+  } else {
+    await setLocale(app, getStoredLocale(SUPPORTED_LOCALES) || getBrowserLocale(SUPPORTED_LOCALES));
+    setThemePreference(app, getStoredThemePreference());
+    attachSystemThemeListener(app);
+  }
 }
 
 const preferenceState = reactive(createPreferenceState());

@@ -1,9 +1,7 @@
 <template>
   <UApp>
     <NuxtLayout>
-      <ClientOnly>
-        <DiveVaultApp />
-      </ClientOnly>
+      <NuxtPage />
     </NuxtLayout>
   </UApp>
 </template>
