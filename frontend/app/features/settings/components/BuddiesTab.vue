@@ -1,30 +1,93 @@
 <script>
-import { settingsContextComputed, settingsContextMethods } from "./settings-context.js";
+import { useProfileStore } from "~/shared/composables/use-profile-store.js";
+import { useSettingsModals } from "~/shared/composables/use-settings-modals.js";
+import { cloneBuddies } from "~/shared/utils/settings-profile.js";
 
 export default {
   name: "BuddiesTab",
-  inject: ["settingsContext"],
+  setup() {
+    const profileStore = useProfileStore();
+    const modals = useSettingsModals();
+    return {
+      profileStore,
+      modals
+    };
+  },
+  data() {
+    return {
+      buddyFilter: "",
+      buddyDrafts: [],
+      editingBuddyIds: []
+    };
+  },
   computed: {
-    ...settingsContextComputed([
-      "areBuddiesEditing",
-      "buddies",
-      "buddiesSaving",
-      "buddyDrafts",
-      "buddyFilter",
-      "isInteractionLocked",
-      "visibleBuddies"
-    ])
+    buddies() {
+      return this.profileStore.buddies || [];
+    },
+    buddiesSaving() {
+      return this.profileStore.isSaving;
+    },
+    isInteractionLocked() {
+      return this.profileStore.isLoading || this.profileStore.isSaving;
+    },
+    areBuddiesEditing() {
+      return this.editingBuddyIds.length > 0;
+    },
+    visibleBuddies() {
+      const source = this.areBuddiesEditing ? this.buddyDrafts : this.buddies;
+      const filter = this.buddyFilter.trim().toLowerCase();
+      if (!filter) return source;
+      return source.filter((buddy) => (buddy.name || "").toLowerCase().includes(filter));
+    }
+  },
+  watch: {
+    buddies: {
+      immediate: true,
+      handler(nextBuddies) {
+        if (!this.areBuddiesEditing) {
+          this.buddyDrafts = cloneBuddies(nextBuddies);
+        }
+      }
+    }
   },
   methods: {
-    ...settingsContextMethods([
-      "addBuddyEntry",
-      "buddyTitle",
-      "cancelBuddiesEdit",
-      "confirmRemoveBuddyItem",
-      "editBuddyItem",
-      "isBuddyEditing",
-      "saveBuddies"
-    ])
+    addBuddyEntry() {
+      this.modals.openCreateModal("buddy");
+    },
+    buddyTitle(buddy, index) {
+      return buddy.name?.trim() || `Buddy ${index + 1}`;
+    },
+    isBuddyEditing(buddyId) {
+      return this.editingBuddyIds.includes(buddyId);
+    },
+    editBuddyItem(buddyId) {
+      this.buddyDrafts = cloneBuddies(this.buddies);
+      this.editingBuddyIds = [buddyId];
+    },
+    cancelBuddiesEdit() {
+      this.buddyDrafts = cloneBuddies(this.buddies);
+      this.editingBuddyIds = [];
+    },
+    async saveBuddies() {
+      await this.profileStore.saveBuddies(this.buddyDrafts);
+      this.editingBuddyIds = [];
+    },
+    confirmRemoveBuddyItem(buddyId) {
+      const buddy = this.buddyDrafts.find((b) => b.id === buddyId) || this.buddies.find((b) => b.id === buddyId);
+      const index = (this.areBuddiesEditing ? this.buddyDrafts : this.buddies).findIndex((b) => b.id === buddyId);
+      const label = buddy ? this.buddyTitle(buddy, index) : "this buddy";
+
+      this.modals.openRemovalModal({
+        type: "buddy",
+        id: buddyId,
+        label,
+        onConfirm: async () => {
+          const nextBuddies = this.buddies.filter((b) => b.id !== buddyId);
+          await this.profileStore.saveBuddies(nextBuddies);
+          this.cancelBuddiesEdit();
+        }
+      });
+    }
   }
 };
 </script>

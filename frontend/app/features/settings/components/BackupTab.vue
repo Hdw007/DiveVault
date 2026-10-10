@@ -1,23 +1,120 @@
 <script>
-import { settingsContextComputed, settingsContextMethods } from "./settings-context.js";
+import { createApiClient } from "~/shared/api/client.js";
+import { useAuth } from "~/shared/composables/auth.js";
+import { useDivesStore } from "~/shared/composables/use-dives-store.js";
+import { useProfileStore } from "~/shared/composables/use-profile-store.js";
+
+function downloadBlob(blob, filename) {
+  const url = window.URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  window.URL.revokeObjectURL(url);
+}
+
+function filenameFromDisposition(disposition, fallback) {
+  if (!disposition) return fallback;
+  const match = disposition.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
+  return match ? decodeURIComponent(match[1]) : fallback;
+}
 
 export default {
   name: "BackupTab",
-  inject: ["settingsContext"],
+  setup() {
+    const profileStore = useProfileStore();
+    const divesStore = useDivesStore();
+    const { getToken } = useAuth();
+    const apiClient = createApiClient({ getToken: () => getToken({ skipCache: true }) });
+    const authenticatedFetch = (res, opts) => apiClient.request(res, opts);
+
+    return {
+      profileStore,
+      divesStore,
+      authenticatedFetch
+    };
+  },
+  data() {
+    return {
+      dataManagementAction: "",
+      dataManagementStatus: "",
+      dataManagementError: ""
+    };
+  },
   computed: {
-    ...settingsContextComputed([
-      "dataManagementAction",
-      "dataManagementError",
-      "dataManagementStatus",
-      "isDataManagementBusy",
-      "isInteractionLocked"
-    ])
+    isDataManagementBusy() {
+      return Boolean(this.dataManagementAction);
+    },
+    isInteractionLocked() {
+      return this.profileStore.isLoading || this.profileStore.isSaving || this.isDataManagementBusy;
+    }
   },
   methods: {
-    ...settingsContextMethods(["exportBackup", "handleBackupImportSelection", "resetDataManagementFeedback"]),
+    resetDataManagementFeedback() {
+      this.dataManagementStatus = "";
+      this.dataManagementError = "";
+    },
     triggerBackupImport() {
       this.resetDataManagementFeedback();
       this.$refs.backupImportInput?.inputRef?.click();
+    },
+    async exportBackup() {
+      this.dataManagementAction = "Exporting Backup";
+      this.resetDataManagementFeedback();
+      try {
+        const response = await this.authenticatedFetch("/api/backup/export");
+        if (!response.ok) {
+          throw new Error(`API returned ${response.status}`);
+        }
+        const blob = await response.blob();
+        const filename = filenameFromDisposition(response.headers.get("Content-Disposition"), "divevault-backup.zip");
+        downloadBlob(blob, filename);
+        this.dataManagementStatus = "Full backup downloaded.";
+      } catch (error) {
+        this.dataManagementError = error?.message || "Could not download backup.";
+      } finally {
+        this.dataManagementAction = "";
+      }
+    },
+    async handleBackupImportSelection(event) {
+      const file = event?.target?.files?.[0];
+      if (event?.target) {
+        event.target.value = "";
+      }
+      if (!file) return;
+
+      this.dataManagementAction = "Importing Backup";
+      this.resetDataManagementFeedback();
+      try {
+        const response = await this.authenticatedFetch("/api/backup/import", {
+          method: "POST",
+          headers: {
+            "Content-Type": file.type || (file.name.toLowerCase().endsWith(".zip") ? "application/zip" : "application/json")
+          },
+          body: file
+        });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) {
+          throw new Error(payload?.error || `API returned ${response.status}`);
+        }
+
+        if (payload?.profile) {
+          this.profileStore.hydrateProfileState(payload.profile);
+        } else {
+          await this.profileStore.fetchProfile();
+        }
+
+        await this.divesStore.fetchDives();
+
+        const summary = payload?.summary || {};
+        this.dataManagementStatus = `Backup imported. ${summary.dives_inserted ?? 0} new dives added from ${summary.dives_in_backup ?? 0} backup dives.`;
+      } catch (error) {
+        this.dataManagementError = error?.message || "Could not import the backup file.";
+      } finally {
+        this.dataManagementAction = "";
+      }
     }
   }
 };

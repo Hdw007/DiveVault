@@ -316,6 +316,13 @@ test("covers settings profile loading and public sharing updates", async ({ page
 
   await settingsRail.getByRole("button", { name: /Dive Sites/ }).click();
   await expect(page.getByRole("heading", { name: "Reusable Site Directory" })).toBeVisible();
+
+  // Test Add Dive Site modal open and close
+  await page.getByRole("button", { name: "Add Dive Site" }).click();
+  await expect(page.getByRole("heading", { name: "Add Dive Site" })).toBeVisible();
+  await page.getByRole("button", { name: "Close" }).click();
+  await expect(page.getByRole("heading", { name: "Add Dive Site" })).toBeHidden();
+
   await expect(page.locator(".dive-theme-map")).toHaveCount(0);
   await page.getByRole("button", { name: "Edit Site" }).click();
   await expect(page.locator(".dive-theme-map")).toHaveCount(0);
@@ -376,6 +383,22 @@ test("covers extracted settings lists and user management", async ({ page }) => 
 
   const settingsRail = page.locator(".settings-section-nav");
   await expect(page.getByRole("heading", { name: "Saved Dive Buddy List" })).toBeVisible();
+
+  // Test opening and closing the Add Buddy modal
+  await page.getByRole("button", { name: "Add Buddy" }).click();
+  await expect(page.getByRole("heading", { name: "Add Buddy" })).toBeVisible();
+  await page.getByRole("button", { name: "Close" }).click();
+  await expect(page.getByRole("heading", { name: "Add Buddy" })).toBeHidden();
+
+  // Re-open Add Buddy and save
+  await page.getByRole("button", { name: "Add Buddy" }).click();
+  await expect(page.getByRole("heading", { name: "Add Buddy" })).toBeVisible();
+  await page.getByPlaceholder("Sam Carter").fill("Sam River");
+  await page.getByRole("button", { name: "Save Buddy" }).click();
+  await expect(page.getByText("Buddies updated.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Add Buddy" })).toBeHidden();
+  await expect(page.getByRole("heading", { name: "Sam River" })).toBeVisible();
+
   await page.getByPlaceholder("Filter buddies").fill("Kai");
   await expect(page.getByRole("heading", { name: "Kai" })).toBeVisible();
   await page.getByRole("button", { name: "Edit Buddy" }).click();

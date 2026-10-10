@@ -1,35 +1,239 @@
 <script>
-import { settingsContextComputed, settingsContextMethods } from "./settings-context.js";
+import { createApiClient } from "~/shared/api/client.js";
+import { useAuth, useUser } from "~/shared/composables/auth.js";
+import { formatSettingsDateTime as formatDateTime } from "~/shared/utils/settings-profile.js";
 
 export default {
   name: "UserManagementTab",
-  inject: ["settingsContext"],
+  setup() {
+    const { user } = useUser();
+    const { getToken } = useAuth();
+    const apiClient = createApiClient({ getToken: () => getToken({ skipCache: true }) });
+    const authenticatedFetch = (res, opts) => apiClient.request(res, opts);
+
+    return {
+      authUser: user,
+      authenticatedFetch
+    };
+  },
+  data() {
+    return {
+      authSettings: {
+        public_registration_enabled: false
+      },
+      authUsers: [],
+      inviteDraft: {
+        email: "",
+        first_name: "",
+        last_name: "",
+        role: "user",
+        expires_in_days: 7
+      },
+      latestInviteUrl: "",
+      manageUsersStatus: "",
+      manageUsersError: "",
+      manageUsersLoading: false,
+      manageUsersSaving: false,
+      inviteSubmitting: false
+    };
+  },
   computed: {
-    ...settingsContextComputed([
-      "authSettings",
-      "authUsers",
-      "inviteDraft",
-      "inviteSubmitting",
-      "latestInviteUrl",
-      "manageUsersError",
-      "manageUsersLoading",
-      "manageUsersSaving",
-      "manageUsersStatus",
-      "ownerUserId"
-    ])
+    canManageUsers() {
+      return this.authUser?.role === "admin" || Boolean(this.authUser?.isOwner);
+    },
+    ownerUserId() {
+      return this.authUser?.isOwner ? this.authUser.id : this.authUsers.find((u) => u.role === "admin")?.id || "";
+    }
+  },
+  watch: {
+    canManageUsers: {
+      immediate: true,
+      async handler(value) {
+        if (value) {
+          await this.fetchUserManagement();
+        } else {
+          this.authUsers = [];
+          this.latestInviteUrl = "";
+          this.manageUsersStatus = "";
+          this.manageUsersError = "";
+        }
+      }
+    }
   },
   methods: {
-    ...settingsContextMethods([
-      "copyLatestInviteUrl",
-      "createUserInvite",
-      "deleteManagedUser",
-      "displayValue",
-      "fetchUserManagement",
-      "formatDateTime",
-      "savePublicRegistrationSetting",
-      "toggleManagedUserActive",
-      "toggleManagedUserRole"
-    ])
+    formatDateTime,
+    displayValue(value, fallback = "—") {
+      return value ? String(value).trim() || fallback : fallback;
+    },
+    async readErrorResponse(response, fallbackMessage = "") {
+      const payload = await response.json().catch(() => null);
+      if (payload?.error) return payload.error;
+      const bodyText = await response.text().catch(() => "");
+      return bodyText || fallbackMessage || `API returned ${response.status}`;
+    },
+    async fetchUserManagement() {
+      if (!this.canManageUsers) return;
+      this.manageUsersLoading = true;
+      this.manageUsersError = "";
+      try {
+        const [settingsResponse, usersResponse] = await Promise.all([
+          this.authenticatedFetch("/api/auth/settings"),
+          this.authenticatedFetch("/api/users")
+        ]);
+        if (!settingsResponse.ok) {
+          throw new Error(await this.readErrorResponse(settingsResponse, "Could not load authentication settings."));
+        }
+        if (!usersResponse.ok) {
+          throw new Error(await this.readErrorResponse(usersResponse, "Could not load the user list."));
+        }
+        const [settingsPayload, usersPayload] = await Promise.all([
+          settingsResponse.json().catch(() => ({})),
+          usersResponse.json().catch(() => ({}))
+        ]);
+        this.authSettings = {
+          public_registration_enabled: Boolean(settingsPayload?.public_registration_enabled),
+          owner_user_id: settingsPayload?.owner_user_id || "",
+          user_count: Number(settingsPayload?.user_count || usersPayload?.users?.length || 0),
+          initialized: Boolean(settingsPayload?.initialized)
+        };
+        this.authUsers = Array.isArray(usersPayload?.users) ? usersPayload.users : [];
+      } catch (error) {
+        this.manageUsersError = error?.message || "Could not load user management.";
+      } finally {
+        this.manageUsersLoading = false;
+      }
+    },
+    async savePublicRegistrationSetting() {
+      this.manageUsersSaving = true;
+      this.manageUsersError = "";
+      this.manageUsersStatus = "";
+      try {
+        const response = await this.authenticatedFetch("/api/auth/settings", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            public_registration_enabled: Boolean(this.authSettings.public_registration_enabled)
+          })
+        });
+        if (!response.ok) {
+          throw new Error(await this.readErrorResponse(response, "Could not update public registration."));
+        }
+        const payload = await response.json().catch(() => ({}));
+        this.authSettings = {
+          public_registration_enabled: Boolean(payload?.public_registration_enabled),
+          owner_user_id: payload?.owner_user_id || "",
+          user_count: Number(payload?.user_count || this.authUsers.length),
+          initialized: Boolean(payload?.initialized)
+        };
+        this.manageUsersStatus = this.authSettings.public_registration_enabled
+          ? "Public registration enabled."
+          : "Public registration disabled.";
+      } catch (error) {
+        this.manageUsersError = error?.message || "Could not update public registration.";
+      } finally {
+        this.manageUsersSaving = false;
+      }
+    },
+    async createUserInvite() {
+      this.inviteSubmitting = true;
+      this.manageUsersError = "";
+      this.manageUsersStatus = "";
+      try {
+        const response = await this.authenticatedFetch("/api/auth/invitations", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(this.inviteDraft)
+        });
+        if (!response.ok) {
+          throw new Error(await this.readErrorResponse(response, "Could not create the invitation."));
+        }
+        const payload = await response.json().catch(() => ({}));
+        const invite = payload?.invitation || {};
+        this.latestInviteUrl = invite.invite_url || "";
+        this.manageUsersStatus = `Invitation created for ${invite.email || this.inviteDraft.email}.`;
+        this.inviteDraft = {
+          email: "",
+          first_name: "",
+          last_name: "",
+          role: this.inviteDraft.role,
+          expires_in_days: this.inviteDraft.expires_in_days
+        };
+        await this.fetchUserManagement();
+      } catch (error) {
+        this.manageUsersError = error?.message || "Could not create the invitation.";
+      } finally {
+        this.inviteSubmitting = false;
+      }
+    },
+    async copyLatestInviteUrl() {
+      if (!this.latestInviteUrl || typeof navigator === "undefined" || !navigator.clipboard) return;
+      await navigator.clipboard.writeText(this.latestInviteUrl);
+      this.manageUsersStatus = "Invite link copied to clipboard.";
+    },
+    async toggleManagedUserActive(user) {
+      this.manageUsersSaving = true;
+      this.manageUsersError = "";
+      this.manageUsersStatus = "";
+      try {
+        const response = await this.authenticatedFetch(`/api/users/${user.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ is_active: !user.is_active })
+        });
+        if (!response.ok) {
+          throw new Error(await this.readErrorResponse(response, "Could not update the user status."));
+        }
+        const payload = await response.json().catch(() => ({}));
+        const updatedUser = payload?.user || user;
+        this.manageUsersStatus = updatedUser.is_active ? `Reactivated ${updatedUser.email}.` : `Deactivated ${updatedUser.email}.`;
+        await this.fetchUserManagement();
+      } catch (error) {
+        this.manageUsersError = error?.message || "Could not update the user status.";
+      } finally {
+        this.manageUsersSaving = false;
+      }
+    },
+    async toggleManagedUserRole(user) {
+      const nextRole = user.role === "admin" ? "user" : "admin";
+      this.manageUsersSaving = true;
+      this.manageUsersError = "";
+      this.manageUsersStatus = "";
+      try {
+        const response = await this.authenticatedFetch(`/api/users/${user.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ role: nextRole })
+        });
+        if (!response.ok) {
+          throw new Error(await this.readErrorResponse(response, "Could not update the user role."));
+        }
+        this.manageUsersStatus = `${user.email} is now ${nextRole}.`;
+        await this.fetchUserManagement();
+      } catch (error) {
+        this.manageUsersError = error?.message || "Could not update the user role.";
+      } finally {
+        this.manageUsersSaving = false;
+      }
+    },
+    async deleteManagedUser(user) {
+      this.manageUsersSaving = true;
+      this.manageUsersError = "";
+      this.manageUsersStatus = "";
+      try {
+        const response = await this.authenticatedFetch(`/api/users/${user.id}`, {
+          method: "DELETE"
+        });
+        if (!response.ok) {
+          throw new Error(await this.readErrorResponse(response, "Could not delete the user."));
+        }
+        this.manageUsersStatus = `${user.email} was removed.`;
+        await this.fetchUserManagement();
+      } catch (error) {
+        this.manageUsersError = error?.message || "Could not delete the user.";
+      } finally {
+        this.manageUsersSaving = false;
+      }
+    }
   }
 };
 </script>

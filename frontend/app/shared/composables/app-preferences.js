@@ -1,3 +1,4 @@
+import { computed, reactive } from "vue";
 import { i18n } from "~/i18n/index.js";
 import { SUPPORTED_LOCALE_CODES } from "~/i18n/locales.js";
 import { LOCALE_STORAGE_KEY, THEME_STORAGE_KEY } from "~/config/storage.js";
@@ -81,6 +82,27 @@ async function initializePreferences(app) {
   attachSystemThemeListener(app);
 }
 
+const preferenceState = reactive(createPreferenceState());
+
+function useAppPreferences() {
+  return {
+    state: preferenceState,
+    currentLocale: computed(() => preferenceState.i18nLocale),
+    themePreference: computed(() => preferenceState.themePreference),
+    resolvedTheme: computed(() => preferenceState.resolvedTheme),
+    async setLocale(locale) {
+      await setLocale(preferenceState, locale);
+    },
+    setThemePreference(theme) {
+      setThemePreference(preferenceState, theme);
+    },
+    syncSystemTheme() {
+      syncSystemTheme(preferenceState);
+    },
+    t: translate
+  };
+}
+
 export {
   createPreferenceState,
   detachSystemThemeListener,
@@ -88,5 +110,6 @@ export {
   setLocale,
   setThemePreference,
   syncSystemTheme,
-  translate
+  translate,
+  useAppPreferences
 };
