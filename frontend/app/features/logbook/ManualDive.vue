@@ -511,7 +511,7 @@ export default {
             <UTextarea
               :value="draft.notes"
               @input="updateField('notes', $event.target.value)"
-              rows="12"
+              :rows="12"
               placeholder="Conditions, wildlife, route, entry, navigation, visibility..."
               class="min-h-[18rem] w-full resize-y border border-primary/10 bg-surface-container-high/35 px-5 py-4 text-sm leading-7 text-on-surface placeholder:text-secondary/50 focus:border-primary/30 focus:ring-1 focus:ring-primary"
             ></UTextarea>
@@ -522,7 +522,8 @@ export default {
               <span class="font-label text-[10px] font-bold uppercase tracking-[0.18em] text-secondary">Tank Volume</span>
               <USelect
                 :model-value="draft.tankVolumeL"
-                :items="[{ label: 'Select Tank Size', value: '' }, ...tankVolumeOptions]"
+                :items="tankVolumeOptions"
+                placeholder="Select Tank Size"
                 @update:model-value="updateField('tankVolumeL', $event)"
                 class="w-full border border-primary/10 bg-background/35 px-4 py-3 text-sm text-on-surface focus:border-primary/30 focus:ring-1 focus:ring-primary"
               />

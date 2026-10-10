@@ -124,6 +124,23 @@ test("covers dashboard, logs, dive detail, and logbook editing", async ({ page }
   await expect(page.getByText("metadata updated.")).toBeVisible();
 });
 
+test("computes dashboard stats fallback when api stats totals are omitted", async ({ page }) => {
+  await installAppMocks(page, {
+    data: {
+      stats: { totalDives: 2 }
+    }
+  });
+  await gotoAndWait(page);
+
+  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+  const bottomTimeCard = page.locator("article", { hasText: "Bottom Time" });
+  await expect(bottomTimeCard).toBeVisible();
+  await expect(bottomTimeCard).toContainText("0h");
+  await expect(bottomTimeCard).toContainText("53min");
+  const maxDepthCard = page.locator("article", { hasText: "Max Depth" });
+  await expect(maxDepthCard).toContainText("24.8 m");
+});
+
 test("navigates between desktop sidebar sections from logs", async ({ page }) => {
   await installAppMocks(page);
   await gotoAndWait(page, "/logs");
@@ -211,6 +228,23 @@ test("creates a manual dive entry outside the importer workflow", async ({ page 
   await page.goto("/#imports");
   await expect(page.getByRole("heading", { name: "Imported Dives" })).toBeVisible();
   await expect(page.locator("body")).toContainText("1 Imported");
+});
+
+test("selects a saved dive site from autocomplete and closes the dropdown menu", async ({ page }) => {
+  await installAppMocks(page);
+  await gotoAndWait(page, "/logs/create");
+
+  await expect(page.getByRole("heading", { name: "Manual Dive Entry" })).toBeVisible();
+
+  const siteInput = page.getByPlaceholder("House Reef");
+  await siteInput.click();
+
+  const option = page.locator(".metadata-autocomplete-option", { hasText: "Blue Hole" });
+  await expect(option).toBeVisible();
+  await option.click();
+
+  await expect(page.locator(".metadata-autocomplete-menu")).toBeHidden();
+  await expect(siteInput).toHaveValue("Blue Hole");
 });
 
 test("covers settings profile loading and public sharing updates", async ({ page }) => {

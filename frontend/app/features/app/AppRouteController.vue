@@ -10,7 +10,8 @@ import {
   missingImportFields,
   normalizeRequiredLogbookFields,
   paddedDiveIndex,
-  isCommittedDive
+  isCommittedDive,
+  pressureRange
 } from "~/shared/utils/core.js";
 import { NAV_ITEMS } from "~/config/navigation.js";
 import { DEFAULT_REQUEST_TIMEOUT_MS } from "~/config/runtime.js";
@@ -54,6 +55,45 @@ const LogsView = defineAsyncComponent(() => import("~/features/logbook/Logs.vue"
 const ManualDiveEntryView = defineAsyncComponent(() => import("~/features/logbook/ManualDive.vue"));
 const PublicProfileView = defineAsyncComponent(() => import("~/features/public-profile/PublicProfile.vue"));
 const SettingsView = defineAsyncComponent(() => import("~/features/settings/Settings.vue"));
+
+function summarizeDivesFallback(dives) {
+  const targetDives = dives.filter((dive) => isCommittedDive(dive));
+  const divesToUse = targetDives.length ? targetDives : dives;
+  const totalDives = divesToUse.length;
+  let totalSeconds = 0;
+  let maxDepth = 0;
+  let totalBarConsumed = 0;
+  let sumDepth = 0;
+
+  for (const dive of divesToUse) {
+    const sec = Number(dive?.duration_seconds || (dive?.duration_ms ? dive.duration_ms / 1000 : 0)) || 0;
+    if (sec > 0) totalSeconds += sec;
+    const depth = Number(dive?.max_depth_m || 0);
+    if (depth > maxDepth) maxDepth = depth;
+    sumDepth += depth;
+
+    const range = pressureRange(dive);
+    if (typeof range?.begin === "number" && typeof range?.end === "number") {
+      const consumed = Math.round(range.begin - range.end);
+      if (consumed > 0) totalBarConsumed += consumed;
+    }
+  }
+
+  const totalHours = totalSeconds ? Math.round((totalSeconds / 3600) * 10) / 10 : 0;
+  const averageDurationSeconds = totalDives ? Math.round((totalSeconds / totalDives) * 100) / 100 : 0;
+  const averageMaxDepth = totalDives ? Math.round((sumDepth / totalDives) * 100) / 100 : 0;
+
+  return {
+    totalDives,
+    totalSeconds,
+    totalHours,
+    maxDepth,
+    totalBarConsumed,
+    averageDurationSeconds,
+    averageMaxDepth,
+    bottomTimeProgress: Math.min(100, Math.round(totalHours))
+  };
+}
 
 export default {
   name: "AppRouteController",
@@ -1253,10 +1293,12 @@ export default {
         }
         const payload = await diveResponse.json();
         this.dives = Array.isArray(payload.dives) ? payload.dives : [];
-        this.dashboardStats =
-          payload?.stats && typeof payload.stats === "object"
-            ? { ...this.dashboardStats, ...payload.stats }
-            : { ...this.dashboardStats, totalDives: this.dives.length };
+        const apiStats = payload?.stats && typeof payload.stats === "object" ? payload.stats : null;
+        if (apiStats && typeof apiStats.totalSeconds === "number") {
+          this.dashboardStats = { ...this.dashboardStats, ...apiStats };
+        } else {
+          this.dashboardStats = { ...this.dashboardStats, ...summarizeDivesFallback(this.dives) };
+        }
         this.syncImportDrafts();
         if (this.selectedImportId && !this.isPendingImportId(this.selectedImportId, this.dives, this.importDrafts)) {
           this.selectedImportId = null;

@@ -468,7 +468,8 @@ export default {
               <span class="font-label text-[10px] font-bold uppercase tracking-[0.18em] text-secondary">Tank Volume</span>
               <USelect
                 :model-value="selectedDraft.tank_volume_l || ''"
-                :items="[{ label: 'Select tank volume', value: '' }, ...tankVolumeOptions]"
+                :items="tankVolumeOptions"
+                placeholder="Select tank volume"
                 @update:model-value="updateField('tank_volume_l', $event)"
                 class="w-full rounded-lg border-none bg-surface-container-high px-4 py-3 text-sm text-on-surface focus:ring-1 focus:ring-primary"
               />
@@ -833,7 +834,8 @@ export default {
                 <span class="font-label text-[10px] font-bold uppercase tracking-[0.2em] text-secondary">Tank Volume</span>
                 <USelect
                   :model-value="selectedDraft.tank_volume_l || ''"
-                  :items="[{ label: 'Select tank volume', value: '' }, ...tankVolumeOptions]"
+                  :items="tankVolumeOptions"
+                  placeholder="Select tank volume"
                   @update:model-value="updateField('tank_volume_l', $event)"
                   class="w-full border border-primary/10 bg-surface-container-high/35 px-4 py-3 text-sm text-on-surface focus:border-primary/30 focus:ring-1 focus:ring-primary"
                 />

@@ -427,8 +427,14 @@ function tankLabel(tank) {
 
 function firstPressureValue(sample) {
   if (!sample?.tank_pressure_bar) return null;
-  const values = Object.values(sample.tank_pressure_bar).filter((value) => typeof value === "number");
-  return values.length ? values[0] : null;
+  if (typeof sample.tank_pressure_bar === "number" && Number.isFinite(sample.tank_pressure_bar)) {
+    return sample.tank_pressure_bar;
+  }
+  if (typeof sample.tank_pressure_bar === "object") {
+    const values = Object.values(sample.tank_pressure_bar).filter((value) => typeof value === "number");
+    return values.length ? values[0] : null;
+  }
+  return null;
 }
 
 function normalizedPressureValue(dive, sample) {
@@ -480,8 +486,10 @@ function averageDepthValue(dive) {
 
 function pressureRange(dive) {
   const tank = primaryTank(dive);
-  if (tank && typeof tank.beginpressure_bar === "number" && typeof tank.endpressure_bar === "number") {
-    return { begin: tank.beginpressure_bar, end: tank.endpressure_bar };
+  const begin = tank?.beginpressure_bar ?? tank?.begin_pressure_bar;
+  const end = tank?.endpressure_bar ?? tank?.end_pressure_bar;
+  if (typeof begin === "number" && typeof end === "number") {
+    return { begin, end };
   }
   const pressures = diveSamples(dive)
     .map((sample) => normalizedPressureValue(dive, sample))
