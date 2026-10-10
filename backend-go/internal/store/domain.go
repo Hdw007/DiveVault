@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -191,6 +192,9 @@ func (db *DB) UpdateDiveLogbook(ctx context.Context, userID string, diveID int64
 		return existing, err
 	}
 	fields := existing.Fields
+	if fields == nil {
+		fields = map[string]any{}
+	}
 	logbook := mapValue(payload["logbook"])
 	if len(logbook) == 0 {
 		logbook = cloneMap(payload)
@@ -200,12 +204,103 @@ func (db *DB) UpdateDiveLogbook(ctx context.Context, userID string, diveID int64
 		logbook["status"] = "complete"
 	}
 	fields["logbook"] = logbook
+	updateTanksFromPayload(fields, payload)
 	fieldsJSON, _ := json.Marshal(fields)
 	_, err = db.pool.Exec(ctx, "UPDATE dives SET fields_json=$1 WHERE user_id=$2 AND id=$3", fieldsJSON, cleanText(userID), diveID)
 	if err != nil {
 		return nil, err
 	}
 	return db.GetDive(ctx, userID, diveID, false)
+}
+
+func parseOptionalNumber(val any) *float64 {
+	if val == nil {
+		return nil
+	}
+	switch v := val.(type) {
+	case float64:
+		return &v
+	case float32:
+		f := float64(v)
+		return &f
+	case int:
+		f := float64(v)
+		return &f
+	case int64:
+		f := float64(v)
+		return &f
+	case string:
+		trimmed := strings.TrimSpace(v)
+		if trimmed == "" {
+			return nil
+		}
+		var f float64
+		if _, err := fmt.Sscanf(trimmed, "%f", &f); err == nil {
+			return &f
+		}
+	}
+	return nil
+}
+
+func updateTanksFromPayload(fields map[string]any, payload map[string]any) {
+	rawVol, hasVol := payload["tank_volume_l"]
+	rawBegin, hasBegin := payload["begin_pressure_bar"]
+	rawEnd, hasEnd := payload["end_pressure_bar"]
+
+	if !hasVol && !hasBegin && !hasEnd {
+		return
+	}
+
+	var tank0 map[string]any
+	var otherTanks []any
+
+	if rawTanks, ok := fields["tanks"].([]any); ok && len(rawTanks) > 0 {
+		if t0, ok := rawTanks[0].(map[string]any); ok {
+			tank0 = cloneMap(t0)
+		}
+		otherTanks = rawTanks[1:]
+	} else if rawTanks, ok := fields["tanks"].([]map[string]any); ok && len(rawTanks) > 0 {
+		tank0 = cloneMap(rawTanks[0])
+		for _, t := range rawTanks[1:] {
+			otherTanks = append(otherTanks, t)
+		}
+	}
+
+	if tank0 == nil {
+		tank0 = map[string]any{}
+	}
+
+	if hasVol {
+		if vol := parseOptionalNumber(rawVol); vol != nil {
+			tank0["volume"] = *vol
+		} else {
+			delete(tank0, "volume")
+		}
+	}
+
+	if hasBegin {
+		if begin := parseOptionalNumber(rawBegin); begin != nil {
+			tank0["beginpressure_bar"] = *begin
+			tank0["begin_pressure_bar"] = *begin
+		} else {
+			delete(tank0, "beginpressure_bar")
+			delete(tank0, "begin_pressure_bar")
+		}
+	}
+
+	if hasEnd {
+		if end := parseOptionalNumber(rawEnd); end != nil {
+			tank0["endpressure_bar"] = *end
+			tank0["end_pressure_bar"] = *end
+		} else {
+			delete(tank0, "endpressure_bar")
+			delete(tank0, "end_pressure_bar")
+		}
+	}
+
+	if len(tank0) > 0 || len(otherTanks) > 0 {
+		fields["tanks"] = append([]any{tank0}, otherTanks...)
+	}
 }
 
 func (db *DB) DeleteDive(ctx context.Context, userID string, diveID int64) (bool, error) {
