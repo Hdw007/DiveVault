@@ -6,10 +6,21 @@ export default {
   setup() {
     const modals = useSettingsModals();
     return {
-      pendingRemoval: modals.pendingRemoval,
-      closeRemovalModal: modals.closeRemovalModal,
-      confirmRemoval: modals.confirmRemoval
+      modals
     };
+  },
+  computed: {
+    pendingRemoval() {
+      return this.modals.pendingRemoval;
+    }
+  },
+  methods: {
+    closeRemovalModal() {
+      this.modals.closeRemovalModal();
+    },
+    confirmRemoval() {
+      return this.modals.confirmRemoval();
+    }
   }
 };
 </script>

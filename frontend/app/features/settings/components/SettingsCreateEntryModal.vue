@@ -6,18 +6,45 @@ export default {
   setup() {
     const modals = useSettingsModals();
     return {
-      pendingCreation: modals.pendingCreation,
-      pendingCreationDraft: modals.pendingCreationDraft,
-      pendingCreationType: modals.pendingCreationType,
-      pendingCreationError: modals.pendingCreationError,
-      pendingCreationSubmitting: modals.pendingCreationSubmitting,
-      pendingCreationLookupLoading: modals.pendingCreationLookupLoading,
-      pendingCreationTitle: modals.pendingCreationTitle,
-      pendingCreationSubmitLabel: modals.pendingCreationSubmitLabel,
-      closeCreateModal: modals.closeCreateModal,
-      confirmCreateModal: modals.confirmCreateModal,
-      searchPendingDiveSiteLocation: modals.searchPendingDiveSiteLocation
+      modals
     };
+  },
+  computed: {
+    pendingCreation() {
+      return this.modals.pendingCreation;
+    },
+    pendingCreationDraft() {
+      return this.modals.pendingCreationDraft;
+    },
+    pendingCreationType() {
+      return this.modals.pendingCreationType;
+    },
+    pendingCreationError() {
+      return this.modals.pendingCreationError;
+    },
+    pendingCreationSubmitting() {
+      return this.modals.pendingCreationSubmitting;
+    },
+    pendingCreationLookupLoading() {
+      return this.modals.pendingCreationLookupLoading;
+    },
+    pendingCreationTitle() {
+      return this.modals.pendingCreationTitle;
+    },
+    pendingCreationSubmitLabel() {
+      return this.modals.pendingCreationSubmitLabel;
+    }
+  },
+  methods: {
+    closeCreateModal() {
+      this.modals.closeCreateModal();
+    },
+    confirmCreateModal() {
+      return this.modals.confirmCreateModal();
+    },
+    searchPendingDiveSiteLocation() {
+      return this.modals.searchPendingDiveSiteLocation();
+    }
   }
 };
 </script>
