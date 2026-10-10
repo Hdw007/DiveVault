@@ -120,3 +120,69 @@ func TestEquipmentServiceSummary(t *testing.T) {
 		t.Fatalf("expected service_due_reason dives, got %v", summaryDiveDue["service_due_reason"])
 	}
 }
+
+func TestUpdateTanksFromPayload(t *testing.T) {
+	// Case 1: Update existing tank pressures and volume from string payload
+	fields := map[string]any{
+		"tanks": []any{
+			map[string]any{
+				"volume":            12.0,
+				"beginpressure_bar": 200.0,
+				"endpressure_bar":   50.0,
+			},
+		},
+	}
+	payload := map[string]any{
+		"tank_volume_l":      "15",
+		"begin_pressure_bar": "210",
+		"end_pressure_bar":   "60",
+	}
+	updateTanksFromPayload(fields, payload)
+	tanks := fields["tanks"].([]any)
+	if len(tanks) != 1 {
+		t.Fatalf("expected 1 tank, got %d", len(tanks))
+	}
+	tank0 := tanks[0].(map[string]any)
+	if tank0["volume"] != 15.0 {
+		t.Errorf("expected volume 15.0, got %v", tank0["volume"])
+	}
+	if tank0["beginpressure_bar"] != 210.0 || tank0["begin_pressure_bar"] != 210.0 {
+		t.Errorf("expected beginpressure_bar 210.0, got %v", tank0["beginpressure_bar"])
+	}
+	if tank0["endpressure_bar"] != 60.0 || tank0["end_pressure_bar"] != 60.0 {
+		t.Errorf("expected endpressure_bar 60.0, got %v", tank0["endpressure_bar"])
+	}
+
+	// Case 2: Create tank when none existed
+	emptyFields := map[string]any{}
+	updateTanksFromPayload(emptyFields, map[string]any{
+		"begin_pressure_bar": 205.0,
+		"end_pressure_bar":   45.0,
+	})
+	createdTanks := emptyFields["tanks"].([]any)
+	if len(createdTanks) != 1 {
+		t.Fatalf("expected 1 created tank, got %d", len(createdTanks))
+	}
+	createdTank0 := createdTanks[0].(map[string]any)
+	if createdTank0["beginpressure_bar"] != 205.0 {
+		t.Errorf("expected beginpressure_bar 205.0, got %v", createdTank0["beginpressure_bar"])
+	}
+	if createdTank0["endpressure_bar"] != 45.0 {
+		t.Errorf("expected endpressure_bar 45.0, got %v", createdTank0["endpressure_bar"])
+	}
+
+	// Case 3: Payload without tank keys leaves tanks untouched
+	originalFields := map[string]any{
+		"tanks": []any{
+			map[string]any{"volume": 10.0},
+		},
+	}
+	updateTanksFromPayload(originalFields, map[string]any{
+		"logbook": map[string]any{"notes": "just notes"},
+	})
+	tanksUnchanged := originalFields["tanks"].([]any)
+	if len(tanksUnchanged) != 1 || tanksUnchanged[0].(map[string]any)["volume"] != 10.0 {
+		t.Errorf("expected tanks untouched, got %v", tanksUnchanged)
+	}
+}
+

@@ -219,20 +219,44 @@ function updateDiveLogbook(data, diveId, payload) {
     nextLogbook.completed_at = "2026-04-07T12:00:00Z";
   }
 
+  const existingTanks = Array.isArray(dive.fields?.tanks) && dive.fields.tanks.length ? dive.fields.tanks : [{}];
+  const nextTanks = existingTanks.map((tank, index) => {
+    if (index !== 0) return tank;
+    const updated = { ...tank };
+    if (payload.tank_volume_l !== undefined) {
+      if (payload.tank_volume_l) {
+        updated.volume = Number(payload.tank_volume_l);
+      } else {
+        delete updated.volume;
+      }
+    }
+    if (payload.begin_pressure_bar !== undefined) {
+      if (payload.begin_pressure_bar) {
+        const val = Number(payload.begin_pressure_bar);
+        updated.beginpressure_bar = val;
+        updated.begin_pressure_bar = val;
+      } else {
+        delete updated.beginpressure_bar;
+        delete updated.begin_pressure_bar;
+      }
+    }
+    if (payload.end_pressure_bar !== undefined) {
+      if (payload.end_pressure_bar) {
+        const val = Number(payload.end_pressure_bar);
+        updated.endpressure_bar = val;
+        updated.end_pressure_bar = val;
+      } else {
+        delete updated.endpressure_bar;
+        delete updated.end_pressure_bar;
+      }
+    }
+    return updated;
+  });
+
   dive.fields = {
     ...dive.fields,
     logbook: nextLogbook,
-    tanks:
-      Array.isArray(dive.fields?.tanks) && dive.fields.tanks.length
-        ? dive.fields.tanks.map((tank, index) =>
-            index === 0
-              ? {
-                  ...tank,
-                  volume: payload.tank_volume_l ? Number(payload.tank_volume_l) : tank.volume
-                }
-              : tank
-          )
-        : dive.fields?.tanks
+    tanks: nextTanks
   };
 
   refreshStats(data);
@@ -260,7 +284,12 @@ function createDiveFromPayload(data, payload) {
     fields: {
       ...(payload.fields || {}),
       location: payload?.fields?.location || { lat: 26.508, lon: -77.089 },
-      tanks: Number.isFinite(Number(tankVolume)) ? [{ volume: Number(tankVolume) }] : payload?.fields?.tanks || [],
+      tanks:
+        Array.isArray(payload?.fields?.tanks) && payload.fields.tanks.length
+          ? payload.fields.tanks
+          : Number.isFinite(Number(tankVolume))
+            ? [{ volume: Number(tankVolume) }]
+            : [],
       logbook: {
         site: logbook.site || "",
         buddy: logbook.buddy || "",

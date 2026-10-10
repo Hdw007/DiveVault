@@ -145,6 +145,33 @@ test("covers dashboard, logs, dive detail, and logbook editing", async ({ page }
   await expect(page.getByText("metadata updated.")).toBeVisible();
 });
 
+test("edits existing dive air values and updates technical telemetry", async ({ page }) => {
+  await installAppMocks(page);
+  await gotoAndWait(page, "/#logs");
+
+  const visibleLogRow = page.locator("article[role='button']:visible").filter({ hasText: "Blue Hole" }).first();
+  await visibleLogRow.click();
+
+  await expect(page.getByRole("heading", { name: "Technical Telemetry" })).toBeVisible();
+  await expect(page.getByText("200 / 90 bar")).toBeVisible();
+
+  await page.getByRole("button", { name: "Edit dive" }).click();
+  await expect(page.getByText("Logbook Entry")).toBeVisible();
+
+  const startPressureInput = page.getByPlaceholder("200");
+  const endPressureInput = page.getByPlaceholder("70");
+  await startPressureInput.fill("205");
+  await endPressureInput.fill("45");
+
+  await page.getByRole("button", { name: "Save Logbook Changes" }).click();
+  await expect(page.getByText("metadata updated.")).toBeVisible();
+
+  await page.getByRole("button", { name: "Back To Dive Detail" }).click();
+  await expect(page.getByRole("heading", { name: "Technical Telemetry" })).toBeVisible();
+  await expect(page.getByText("205 / 45 bar")).toBeVisible();
+  await expect(page.getByText("160 bar used")).toBeVisible();
+});
+
 test("computes dashboard stats fallback when api stats totals are omitted", async ({ page }) => {
   await installAppMocks(page, {
     data: {

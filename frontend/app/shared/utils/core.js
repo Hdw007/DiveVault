@@ -222,12 +222,10 @@ function importDraftSeed(dive) {
   const logbook = logbookFields(dive);
   const tank = primaryTank(dive);
   const tankVolume = typeof tank?.volume === "number" && Number.isFinite(tank.volume) ? String(Math.round(tank.volume)) : "";
-  const beginPressure =
-    typeof tank?.beginpressure_bar === "number" && Number.isFinite(tank.beginpressure_bar)
-      ? String(Math.round(tank.beginpressure_bar))
-      : "";
-  const endPressure =
-    typeof tank?.endpressure_bar === "number" && Number.isFinite(tank.endpressure_bar) ? String(Math.round(tank.endpressure_bar)) : "";
+  const rawBegin = tank?.beginpressure_bar ?? tank?.begin_pressure_bar;
+  const beginPressure = typeof rawBegin === "number" && Number.isFinite(rawBegin) ? String(Math.round(rawBegin)) : "";
+  const rawEnd = tank?.endpressure_bar ?? tank?.end_pressure_bar;
+  const endPressure = typeof rawEnd === "number" && Number.isFinite(rawEnd) ? String(Math.round(rawEnd)) : "";
   return {
     site: typeof logbook.site === "string" ? logbook.site : "",
     buddy: typeof logbook.buddy === "string" ? logbook.buddy : "",
