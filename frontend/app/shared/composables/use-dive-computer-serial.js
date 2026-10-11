@@ -36,34 +36,43 @@ export function useDiveComputerSerial() {
   function pumpIncomingData() {
     if (!activePort.value || !activePort.value.readable || streamReader) return;
 
-    try {
-      streamReader = activePort.value.readable.getReader();
-      isStreamOpen = true;
-    } catch (err) {
-      lastError.value = err?.message || "Failed to acquire serial stream reader";
-      return;
-    }
+    isStreamOpen = true;
 
     (async () => {
-      try {
-        while (isStreamOpen && activePort.value) {
-          const { value, done } = await streamReader.read();
-          if (done) break;
-          if (value && value.length > 0) {
-            readChunks.push(value);
-            checkWaiters();
-          }
+      while (isStreamOpen && activePort.value && activePort.value.readable) {
+        try {
+          streamReader = activePort.value.readable.getReader();
+        } catch (err) {
+          lastError.value = err?.message || "Failed to acquire serial stream reader";
+          await new Promise((r) => setTimeout(r, 50));
+          continue;
         }
-      } catch {
-        // Stream reading terminated or cancelled
-      } finally {
-        if (streamReader) {
-          try {
-            streamReader.releaseLock();
-          } catch {
-            // Reader already released
+
+        try {
+          while (isStreamOpen && activePort.value) {
+            const { value, done } = await streamReader.read();
+            if (done) {
+              isStreamOpen = false;
+              break;
+            }
+            if (value && value.length > 0) {
+              readChunks.push(value);
+              checkWaiters();
+            }
           }
-          streamReader = null;
+        } catch (err) {
+          // Recoverable hardware signal errors (such as framing or break on wet contacts)
+          console.warn("[WebSerial] Recoverable stream read error:", err?.name, err?.message);
+          await new Promise((r) => setTimeout(r, 20));
+        } finally {
+          if (streamReader) {
+            try {
+              streamReader.releaseLock();
+            } catch {
+              // Reader already released
+            }
+            streamReader = null;
+          }
         }
       }
     })();
@@ -135,6 +144,12 @@ export function useDiveComputerSerial() {
     try {
       await activePort.value.open(serialOptions);
       currentConfig = { ...serialOptions };
+      // Assert DTR line to power interface cable (such as Aladin stolen-power circuit)
+      try {
+        await activePort.value.setSignals({ dataTerminalReady: true, requestToSend: false });
+      } catch (sigErr) {
+        console.warn("[WebSerial] Could not assert initial DTR/RTS signals:", sigErr);
+      }
       isConnected.value = true;
       pumpIncomingData();
     } catch (err) {

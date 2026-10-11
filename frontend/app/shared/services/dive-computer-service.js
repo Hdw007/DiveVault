@@ -74,6 +74,7 @@ export async function downloadDivesFromDevice({
 }) {
   const mod = await loadDiveComputerModule();
   const downloadedDives = [];
+  const pendingDivePromises = [];
   let latestFingerprint = fingerprintHex;
 
   // Configure bridge callbacks
@@ -110,35 +111,44 @@ export async function downloadDivesFromDevice({
         onProgress(progress);
       }
     },
-    async onDive(metaJson, rawPtr, rawSize, fpPtr, fpSize) {
+    onDive(metaJson, rawPtr, rawSize, fpPtr, fpSize) {
       try {
         const meta = JSON.parse(metaJson);
         const rawBytes = mod.HEAPU8.slice(rawPtr, rawPtr + rawSize);
         const fpBytes = fpSize > 0 ? mod.HEAPU8.slice(fpPtr, fpPtr + fpSize) : null;
 
-        const rawSha256 = await sha256Hex(rawBytes);
-        const rawB64 = bytesToBase64(rawBytes);
-        const fpHex = fpBytes ? bytesToHex(fpBytes) : null;
-        const uid = fpHex ? `${vendor}:${product}:${fpHex}` : `${vendor}:${product}:${rawSha256}`;
+        const p = (async () => {
+          try {
+            const rawSha256 = await sha256Hex(rawBytes);
+            const rawB64 = bytesToBase64(rawBytes);
+            const fpHex = fpBytes ? bytesToHex(fpBytes) : null;
+            const uid = fpHex ? `${vendor}:${product}:${fpHex}` : `${vendor}:${product}:${rawSha256}`;
+            const startedAt = meta.started_at && meta.started_at.length >= 10 ? meta.started_at : new Date().toISOString();
 
-        const diveRecord = {
-          vendor,
-          product,
-          dive_uid: uid,
-          fingerprint_hex: fpHex,
-          started_at: meta.started_at,
-          duration_seconds: meta.duration_seconds,
-          max_depth_m: meta.max_depth_m,
-          avg_depth_m: meta.avg_depth_m,
-          fields: meta.fields || {},
-          raw_sha256: rawSha256,
-          raw_data_b64: rawB64,
-          samples: meta.samples || []
-        };
+            const diveRecord = {
+              vendor,
+              product,
+              dive_uid: uid,
+              fingerprint_hex: fpHex,
+              started_at: startedAt,
+              duration_seconds: meta.duration_seconds || 0,
+              max_depth_m: meta.max_depth_m || 0,
+              avg_depth_m: meta.avg_depth_m || 0,
+              fields: meta.fields || {},
+              raw_sha256: rawSha256,
+              raw_data_b64: rawB64,
+              samples: meta.samples || []
+            };
 
-        downloadedDives.push(diveRecord);
+            downloadedDives.push(diveRecord);
+          } catch (err) {
+            console.error("Error processing parsed dive:", err);
+          }
+        })();
+
+        pendingDivePromises.push(p);
       } catch (err) {
-        console.error("Error processing parsed dive:", err);
+        console.error("Error synchronously capturing dive data in onDive:", err);
       }
     },
     onComplete(fpHex, _count) {
@@ -150,6 +160,9 @@ export async function downloadDivesFromDevice({
     const rc = await mod.ccall("dc_bridge_download", "number", ["string", "string", "string"], [vendor, product, fingerprintHex || ""], {
       async: true
     });
+
+    // Wait for all async dive record formatting/hashing tasks to settle
+    await Promise.all(pendingDivePromises);
 
     return {
       status: rc,

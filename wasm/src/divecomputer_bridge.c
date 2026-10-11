@@ -400,8 +400,8 @@ static int cb_dive(const unsigned char *data, unsigned int size, const unsigned 
     /* Emit dive to JavaScript */
     js_emit_dive(meta.data, data, size, fp, fsize);
 
-    /* Record latest fingerprint hex */
-    if (fsize > 0 && fp) {
+    /* Record latest fingerprint hex (newest dive is the first one emitted) */
+    if (st->dive_count == 0 && fsize > 0 && fp) {
         size_t hex_len = 0;
         for (unsigned int i = 0; i < fsize && hex_len + 3 < sizeof(st->latest_fingerprint); ++i) {
             hex_len += snprintf(st->latest_fingerprint + hex_len, sizeof(st->latest_fingerprint) - hex_len, "%02x", fp[i]);
