@@ -146,7 +146,10 @@ function isPendingImportId(diveId, dives = state.dives, drafts = state.importDra
 }
 
 async function fetchDives(apiClient = null, options = {}) {
-  state.loading = true;
+  const isSilent = options.silent === true;
+  if (!isSilent) {
+    state.loading = true;
+  }
   state.error = "";
   try {
     const client = resolveApiClient(apiClient);
@@ -175,7 +178,9 @@ async function fetchDives(apiClient = null, options = {}) {
     state.error = err?.message || "Could not load dives.";
     throw err;
   } finally {
-    state.loading = false;
+    if (!isSilent) {
+      state.loading = false;
+    }
   }
 }
 

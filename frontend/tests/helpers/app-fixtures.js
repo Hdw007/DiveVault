@@ -173,7 +173,8 @@ function baseData() {
         service_due: true,
         service_due_reason: "dives"
       }
-    ]
+    ],
+    device_states: {}
   };
 }
 
@@ -642,6 +643,29 @@ async function installAppMocks(page, options = {}) {
       const payload = request.postDataJSON ? request.postDataJSON() : JSON.parse(request.postData() || "{}");
       const createdDive = createDiveFromPayload(data, payload);
       await fulfillJson(route, { inserted: true, id: createdDive.id }, 201);
+      return;
+    }
+
+    if (pathname === "/api/device-state" && request.method() === "GET") {
+      const vendor = url.searchParams.get("vendor");
+      const product = url.searchParams.get("product");
+      const key = `${vendor}:${product}`;
+      const state = data.device_states?.[key] || { vendor, product, fingerprint_hex: null, updated_at: null };
+      await fulfillJson(route, clone(state));
+      return;
+    }
+
+    if (pathname === "/api/device-state" && request.method() === "PUT") {
+      const payload = request.postDataJSON ? request.postDataJSON() : JSON.parse(request.postData() || "{}");
+      if (!data.device_states) data.device_states = {};
+      const key = `${payload.vendor}:${payload.product}`;
+      data.device_states[key] = {
+        vendor: payload.vendor,
+        product: payload.product,
+        fingerprint_hex: payload.fingerprint_hex,
+        updated_at: new Date().toISOString()
+      };
+      await fulfillJson(route, clone(data.device_states[key]));
       return;
     }
 

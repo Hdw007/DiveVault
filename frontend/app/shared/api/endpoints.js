@@ -33,6 +33,10 @@ export function cliAuthApproveUrl() {
   return API_ENDPOINTS.cliAuthApprove;
 }
 
+export function deviceStateUrl(vendor, product) {
+  return `${API_ENDPOINTS.deviceState}?vendor=${encodeURIComponent(vendor)}&product=${encodeURIComponent(product)}`;
+}
+
 export function diveLogbookUrl(diveId) {
   return `${API_ENDPOINTS.dives}/${encodeURIComponent(diveId)}/logbook`;
 }

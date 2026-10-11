@@ -30,3 +30,4 @@ frontend/llms.txt
 frontend/playwright-report
 frontend/test-results
 *.code-workspace
+.build-wasm/

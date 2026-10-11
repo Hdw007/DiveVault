@@ -3,6 +3,7 @@ import { createApiClient } from "~/shared/api/client.js";
 import { useAuth } from "~/shared/composables/auth.js";
 import { useDivesStore } from "~/shared/composables/use-dives-store.js";
 import { duplicateImportWarning } from "~/shared/utils/settings-profile.js";
+import DiveComputerImportModal from "~/shared/components/DiveComputerImportModal.vue";
 
 function downloadBlob(blob, filename) {
   const url = window.URL.createObjectURL(blob);
@@ -23,6 +24,9 @@ function filenameFromDisposition(disposition, fallback) {
 
 export default {
   name: "DataManagementTab",
+  components: {
+    DiveComputerImportModal
+  },
   props: {
     cliAuthCode: {
       type: String,
@@ -69,7 +73,8 @@ export default {
       importReadyForReview: false,
       importPreview: null,
       pendingImportFile: null,
-      pendingImportKind: ""
+      pendingImportKind: "",
+      showDiveComputerModal: false
     };
   },
   computed: {
@@ -300,6 +305,15 @@ export default {
       } finally {
         this.desktopSyncApproving = false;
       }
+    },
+    handleDiveComputerImported() {
+      this.dataManagementStatus = "Dive computer import completed. New dives are ready for logbook review.";
+      this.importReadyForReview = true;
+      if (typeof this.refreshDives === "function") {
+        this.refreshDives();
+      } else {
+        this.divesStore.fetchDives();
+      }
     }
   }
 };
@@ -398,6 +412,19 @@ export default {
         </div>
         <span class="material-symbols-outlined text-secondary/60">upload</span>
       </UButton>
+
+      <UButton @click="showDiveComputerModal = true" :disabled="isDataManagementBusy || isInteractionLocked" class="settings-action-card">
+        <div>
+          <div class="flex items-center gap-3">
+            <span class="material-symbols-outlined text-primary">cable</span>
+            <p class="font-headline text-xl font-bold text-on-surface">Direct Dive Computer Import</p>
+          </div>
+          <p class="mt-3 text-sm leading-6 text-secondary">
+            Connect directly via USB-to-Serial (Aladin Air, Suunto, Mares, Cressi, etc.) using WebSerial.
+          </p>
+        </div>
+        <span class="material-symbols-outlined text-secondary/60">cable</span>
+      </UButton>
     </div>
 
     <div v-if="importPreview" class="settings-import-card mt-6">
@@ -488,5 +515,7 @@ export default {
       class="hidden"
       @change="handleSubsurfaceImportSelection"
     />
+
+    <DiveComputerImportModal :show="showDiveComputerModal" @close="showDiveComputerModal = false" @imported="handleDiveComputerImported" />
   </div>
 </template>

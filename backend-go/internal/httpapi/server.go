@@ -325,7 +325,7 @@ func applySecurityHeaders(header http.Header) {
 	header.Set("X-Content-Type-Options", "nosniff")
 	header.Set("X-Frame-Options", "DENY")
 	header.Set("Referrer-Policy", "strict-origin-when-cross-origin")
-	header.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(self)")
+	header.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(self), serial=(self)")
 }
 
 func mustJSON(payload any) string {

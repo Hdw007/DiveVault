@@ -18,9 +18,13 @@ import {
   numberOrZero,
   parseDate
 } from "~/shared/utils/core.js";
+import DiveComputerImportModal from "~/shared/components/DiveComputerImportModal.vue";
 
 export default {
   name: "DiveImportQueueView",
+  components: {
+    DiveComputerImportModal
+  },
   props: [
     "dives",
     "importDrafts",
@@ -77,7 +81,17 @@ export default {
     },
     isDeleting(diveId) {
       return String(this.deletingDiveId) === String(diveId);
+    },
+    handleImportedFromComputer() {
+      if (typeof this.fetchDives === "function") {
+        this.fetchDives({ silent: true });
+      }
     }
+  },
+  data() {
+    return {
+      showDiveComputerModal: false
+    };
   }
 };
 </script>
@@ -216,7 +230,14 @@ export default {
             </div>
             <h3 class="font-headline text-5xl font-bold tracking-tight">Imported Dives</h3>
           </div>
-          <div class="flex gap-3">
+          <div class="flex flex-wrap gap-3">
+            <UButton
+              @click="showDiveComputerModal = true"
+              class="inline-flex items-center gap-2 bg-primary px-5 py-3 font-label text-[10px] font-bold uppercase tracking-[0.2em] text-on-primary transition-all hover:brightness-110"
+            >
+              <span class="material-symbols-outlined text-sm">cable</span>
+              Import From Dive Computer
+            </UButton>
             <UButton
               @click="setView('logs')"
               class="inline-flex items-center gap-2 bg-surface-container-high px-5 py-3 font-label text-[10px] font-bold uppercase tracking-[0.2em] text-on-surface transition-colors hover:text-primary"
@@ -437,8 +458,13 @@ export default {
         </p>
         <div class="flex flex-wrap gap-3">
           <UButton
-            @click="setView('logs')"
+            @click="showDiveComputerModal = true"
             class="bg-primary px-5 py-3 font-label text-[10px] font-bold uppercase tracking-[0.2em] text-on-primary"
+            >Import From Dive Computer</UButton
+          >
+          <UButton
+            @click="setView('logs')"
+            class="bg-surface-container-high px-5 py-3 font-label text-[10px] font-bold uppercase tracking-[0.2em] text-on-surface"
             >Return To Logs</UButton
           >
           <UButton
@@ -449,5 +475,7 @@ export default {
         </div>
       </section>
     </section>
+
+    <DiveComputerImportModal :show="showDiveComputerModal" @close="showDiveComputerModal = false" @imported="handleImportedFromComputer" />
   </section>
 </template>

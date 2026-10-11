@@ -28,3 +28,20 @@ export function updateDiveLogbook(api, diveId, payload) {
     body: JSON.stringify(payload)
   });
 }
+
+export function fetchDeviceState(api, vendor, product) {
+  const url = `${API_ENDPOINTS.deviceState}?vendor=${encodeURIComponent(vendor)}&product=${encodeURIComponent(product)}`;
+  return api.request(url);
+}
+
+export function saveDeviceState(api, vendor, product, fingerprintHex) {
+  return api.request(API_ENDPOINTS.deviceState, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      vendor,
+      product,
+      fingerprint_hex: fingerprintHex
+    })
+  });
+}

@@ -10,8 +10,8 @@ const profileStore = useProfileStore();
 const { selectImportDive, setView } = useAppNavigation();
 const shell = useAppShell();
 
-function fetchDives() {
-  return divesStore.fetchDives(shell.apiClient());
+function fetchDives(options = {}) {
+  return divesStore.fetchDives(shell.apiClient(), options);
 }
 </script>
 
