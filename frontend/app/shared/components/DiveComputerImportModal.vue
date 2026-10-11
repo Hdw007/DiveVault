@@ -51,7 +51,8 @@ export default {
       isCancelled: false,
       debugLogs: [],
       showDebugLogs: false,
-      copiedLogs: false
+      copiedLogs: false,
+      selectedDiveUids: []
     };
   },
   computed: {
@@ -76,6 +77,19 @@ export default {
     progressPercent() {
       if (this.progressTotal <= 0) return 0;
       return Math.min(100, Math.round((this.progressCurrent / this.progressTotal) * 100));
+    },
+    isAllSelected() {
+      return this.discoveredDives.length > 0 && this.selectedDiveUids.length === this.discoveredDives.length;
+    },
+    isSomeSelected() {
+      return this.selectedDiveUids.length > 0 && this.selectedDiveUids.length < this.discoveredDives.length;
+    },
+    selectedDivesCount() {
+      return this.selectedDiveUids.length;
+    },
+    divesToImport() {
+      const selectedSet = new Set(this.selectedDiveUids);
+      return this.discoveredDives.filter((d) => selectedSet.has(d.dive_uid));
     }
   },
   watch: {
@@ -145,6 +159,7 @@ export default {
       this.progressTotal = 100;
       this.progressMessage = "";
       this.discoveredDives = [];
+      this.selectedDiveUids = [];
       this.latestFingerprint = "";
       this.importingDives = false;
       this.importedCount = 0;
@@ -254,6 +269,7 @@ export default {
 
         this.latestFingerprint = result.latestFingerprint || "";
         this.discoveredDives = result.dives || [];
+        this.selectedDiveUids = this.discoveredDives.map((d) => d.dive_uid);
 
         if (this.discoveredDives.length === 0) {
           this.progressMessage = "No new dive records found on the device.";
@@ -268,8 +284,24 @@ export default {
         this.errorMessage = err?.message || "Failed to download from dive computer.";
       }
     },
+    toggleSelectAll() {
+      if (this.isAllSelected) {
+        this.selectedDiveUids = [];
+      } else {
+        this.selectedDiveUids = this.discoveredDives.map((d) => d.dive_uid);
+      }
+    },
+    toggleDiveSelection(diveUid) {
+      const idx = this.selectedDiveUids.indexOf(diveUid);
+      if (idx > -1) {
+        this.selectedDiveUids.splice(idx, 1);
+      } else {
+        this.selectedDiveUids.push(diveUid);
+      }
+    },
     async handleConfirmImport() {
-      if (this.discoveredDives.length === 0) return;
+      const targetDives = this.divesToImport;
+      if (targetDives.length === 0) return;
 
       this.importingDives = true;
       this.errorMessage = "";
@@ -277,7 +309,7 @@ export default {
       this.skippedCount = 0;
 
       try {
-        for (const dive of this.discoveredDives) {
+        for (const dive of targetDives) {
           const res = await createDive(this.apiClient, dive);
           if (res.ok) {
             const data = await res.json();
@@ -312,7 +344,7 @@ export default {
       this.$emit("imported", {
         importedCount: this.importedCount,
         skippedCount: this.skippedCount,
-        dives: this.discoveredDives
+        dives: this.divesToImport
       });
       this.closeModal();
     },
@@ -480,16 +512,27 @@ export default {
               Found {{ discoveredDives.length }} dive{{ discoveredDives.length === 1 ? "" : "s" }} ready to import into your logbook.
             </p>
           </div>
-          <span class="rounded bg-primary/15 px-3 py-1 font-mono text-xs font-bold text-primary"> {{ discoveredDives.length }} Dives </span>
+          <span class="rounded bg-primary/15 px-3 py-1 font-mono text-xs font-bold text-primary">
+            {{ selectedDivesCount }} of {{ discoveredDives.length }} Selected
+          </span>
         </div>
 
         <!-- Dives Summary Table -->
         <div class="max-h-64 overflow-y-auto rounded-xl border border-primary/10">
           <table class="w-full text-left text-sm text-on-surface">
             <thead
-              class="sticky top-0 bg-surface-container-high border-b border-primary/10 text-[10px] font-bold uppercase tracking-wider text-secondary"
+              class="sticky top-0 z-10 bg-surface-container-high border-b border-primary/10 text-[10px] font-bold uppercase tracking-wider text-secondary"
             >
               <tr>
+                <th class="p-3 w-10 text-center">
+                  <input
+                    type="checkbox"
+                    :checked="isAllSelected"
+                    @change="toggleSelectAll"
+                    class="h-4 w-4 rounded border-primary/30 bg-surface-container text-primary focus:ring-primary cursor-pointer accent-primary"
+                    title="Select / Deselect All"
+                  />
+                </th>
                 <th class="p-3">#</th>
                 <th class="p-3">Date / Time</th>
                 <th class="p-3">Max Depth</th>
@@ -498,7 +541,21 @@ export default {
               </tr>
             </thead>
             <tbody class="divide-y divide-primary/5">
-              <tr v-for="(dive, idx) in discoveredDives" :key="dive.dive_uid || idx">
+              <tr
+                v-for="(dive, idx) in discoveredDives"
+                :key="dive.dive_uid || idx"
+                @click="toggleDiveSelection(dive.dive_uid)"
+                class="cursor-pointer transition-colors hover:bg-primary/5 select-none"
+                :class="{ 'bg-primary/[0.04]': selectedDiveUids.includes(dive.dive_uid) }"
+              >
+                <td class="p-3 w-10 text-center" @click.stop>
+                  <input
+                    type="checkbox"
+                    :value="dive.dive_uid"
+                    v-model="selectedDiveUids"
+                    class="h-4 w-4 rounded border-primary/30 bg-surface-container text-primary focus:ring-primary cursor-pointer accent-primary"
+                  />
+                </td>
                 <td class="p-3 font-mono text-xs text-secondary">{{ idx + 1 }}</td>
                 <td class="p-3 font-medium">{{ formatDate(dive.started_at) }} {{ formatTime(dive.started_at) }}</td>
                 <td class="p-3 font-mono text-primary">{{ formatDepthNumber(dive.max_depth_m) }} m</td>
@@ -514,9 +571,14 @@ export default {
           <UButton type="button" @click="closeModal" :disabled="importingDives" class="settings-button settings-button-ghost">
             Cancel
           </UButton>
-          <UButton type="button" :disabled="importingDives" @click="handleConfirmImport" class="settings-button settings-button-primary">
-            {{ importingDives ? "Importing Dives..." : `Import ${discoveredDives.length} Dives` }}
-          </UButton>
+          <button
+            type="button"
+            :disabled="importingDives || selectedDivesCount === 0"
+            @click="handleConfirmImport"
+            class="settings-button settings-button-primary disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {{ importingDives ? "Importing Dives..." : `Import ${selectedDivesCount} Dives` }}
+          </button>
         </div>
       </div>
 

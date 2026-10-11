@@ -170,3 +170,66 @@ test("executes end-to-end import flow from dive computer into the import queue",
   // Verify imported dive is present in the review list
   await expect(page.locator("div:visible").filter({ hasText: "Uwatec" }).first()).toBeVisible();
 });
+
+test("allows selecting specific dives via checkboxes before importing", async ({ page }) => {
+  const mockDivesResult = {
+    status: 0,
+    latestFingerprint: "01020305",
+    dives: [
+      {
+        vendor: "Uwatec",
+        product: "Aladin Air",
+        dive_uid: "Uwatec:Aladin Air:dive-1",
+        started_at: "2026-03-25T14:30:00Z",
+        duration_seconds: 1800,
+        max_depth_m: 18.5,
+        avg_depth_m: 12.0,
+        fields: {},
+        raw_sha256: "raw-sha-1",
+        raw_data_b64: "AQID",
+        samples: []
+      },
+      {
+        vendor: "Uwatec",
+        product: "Aladin Air",
+        dive_uid: "Uwatec:Aladin Air:dive-2",
+        started_at: "2026-03-24T10:00:00Z",
+        duration_seconds: 2400,
+        max_depth_m: 25.0,
+        avg_depth_m: 16.0,
+        fields: {},
+        raw_sha256: "raw-sha-2",
+        raw_data_b64: "BAUG",
+        samples: []
+      }
+    ]
+  };
+
+  await setupMockWebSerial(page, mockDivesResult);
+  await installAppMocks(page);
+  await gotoAndWait(page, "/#imports");
+
+  await page.getByRole("button", { name: "Import from Dive Computer" }).first().click();
+  await page.getByRole("button", { name: "Connect & Download Dives" }).click();
+
+  await expect(page.getByRole("heading", { name: "Discovered Dives" })).toBeVisible();
+  await expect(page.locator("text=2 of 2 Selected")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Import 2 Dives" })).toBeVisible();
+
+  // Uncheck the first dive by clicking its checkbox
+  const checkboxes = page.locator("tbody input[type='checkbox']");
+  await checkboxes.first().uncheck();
+
+  await expect(page.locator("text=1 of 2 Selected")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Import 1 Dives" })).toBeVisible();
+
+  // Click Import 1 Dives
+  await page.getByRole("button", { name: "Import 1 Dives" }).click();
+
+  // Verify only 1 dive was processed
+  await expect(page.getByRole("heading", { name: "Import Complete!" })).toBeVisible();
+  await expect(page.locator("text=1 new dive imported into the review queue.")).toBeVisible();
+
+  await page.getByRole("button", { name: "Done" }).click();
+  await expect(page.getByRole("heading", { name: "Connect Dive Computer" })).not.toBeVisible();
+});
