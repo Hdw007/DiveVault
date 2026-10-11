@@ -147,7 +147,9 @@ export async function downloadDivesFromDevice({
   };
 
   try {
-    const rc = mod.ccall("dc_bridge_download", "number", ["string", "string", "string"], [vendor, product, fingerprintHex || ""]);
+    const rc = await mod.ccall("dc_bridge_download", "number", ["string", "string", "string"], [vendor, product, fingerprintHex || ""], {
+      async: true
+    });
 
     return {
       status: rc,

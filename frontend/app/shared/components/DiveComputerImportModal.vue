@@ -36,7 +36,7 @@ export default {
       step: "select", // "select" | "connecting" | "transferring" | "preview" | "completed"
       supportedModels: [],
       selectedVendor: "Uwatec",
-      selectedProduct: "Aladin Air",
+      selectedProduct: "Aladin Air Twin",
       searchQuery: "",
       progressStage: "",
       progressCurrent: 0,
@@ -203,6 +203,9 @@ export default {
             this.progressTotal = p.total || 100;
             if (p.stage === "reading") {
               this.progressMessage = `Reading memory dump (${p.current} / ${p.total} bytes)...`;
+            } else if (p.stage === "waiting") {
+              this.progressMessage =
+                "Waiting for dive computer transmission... (Bridge / wet the contacts on your Aladin to start transfer)";
             } else {
               this.progressMessage = `Status: ${p.stage}...`;
             }
@@ -213,6 +216,25 @@ export default {
         await this.serial.close();
 
         if (this.isCancelled) {
+          this.step = "select";
+          return;
+        }
+
+        if (result.status !== 0 && result.status !== 1) {
+          const statusMessages = {
+            "-1": "Device or operation unsupported by driver",
+            "-2": "Invalid arguments supplied to driver",
+            "-3": "Out of memory in driver",
+            "-4": `Device model "${this.selectedVendor} ${this.selectedProduct}" not found in libdivecomputer descriptor list`,
+            "-5": "Serial port access denied",
+            "-6": "Communication I/O error on serial port",
+            "-7": "Communication timed out waiting for dive computer",
+            "-8": "Protocol error during dive computer transmission",
+            "-9": "Unexpected data format received from dive computer",
+            "-10": "Transfer was cancelled"
+          };
+          const errDetail = statusMessages[String(result.status)] || `Transfer failed with status code ${result.status}`;
+          this.errorMessage = errDetail;
           this.step = "select";
           return;
         }

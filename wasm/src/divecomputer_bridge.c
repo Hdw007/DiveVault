@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <stdint.h>
 #include <stdarg.h>
 #include <emscripten.h>
@@ -19,6 +20,17 @@
 #include <libdivecomputer/parser.h>
 #include <libdivecomputer/custom.h>
 
+static int ci_contains(const char *haystack, const char *needle) {
+    if (!haystack || !needle) return 0;
+    size_t hlen = strlen(haystack);
+    size_t nlen = strlen(needle);
+    if (nlen > hlen) return 0;
+    for (size_t i = 0; i <= hlen - nlen; i++) {
+        if (strncasecmp(haystack + i, needle, nlen) == 0) return 1;
+    }
+    return 0;
+}
+
 /* --- JavaScript imported bridges via EM_ASYNC_JS / EM_JS --- */
 
 EM_ASYNC_JS(int, js_serial_configure, (unsigned int baudrate, unsigned int databits, int parity, int stopbits, int flowcontrol), {
@@ -27,17 +39,17 @@ EM_ASYNC_JS(int, js_serial_configure, (unsigned int baudrate, unsigned int datab
 });
 
 EM_ASYNC_JS(int, js_serial_set_dtr, (int value), {
-    if (!Module.serialBridge || !Module.serialBridge.setDtr) return -1;
+    if (!Module.serialBridge || !Module.serialBridge.setDtr) return 0;
     return await Module.serialBridge.setDtr(value);
 });
 
 EM_ASYNC_JS(int, js_serial_set_rts, (int value), {
-    if (!Module.serialBridge || !Module.serialBridge.setRts) return -1;
+    if (!Module.serialBridge || !Module.serialBridge.setRts) return 0;
     return await Module.serialBridge.setRts(value);
 });
 
 EM_ASYNC_JS(int, js_serial_set_break, (int value), {
-    if (!Module.serialBridge || !Module.serialBridge.setBreak) return -1;
+    if (!Module.serialBridge || !Module.serialBridge.setBreak) return 0;
     return await Module.serialBridge.setBreak(value);
 });
 
@@ -49,19 +61,23 @@ EM_ASYNC_JS(int, js_serial_read, (uint8_t *buffer, size_t size, size_t *actual, 
         if (actual) HEAP32[actual >> 2] = res.bytesRead;
         return 0; // DC_STATUS_SUCCESS
     }
-    if (res.status === 4) return 4; // DC_STATUS_TIMEOUT
-    return res.status || -1;
+    if (res.status === -7 || res.status === 4) {
+        if (actual) HEAP32[actual >> 2] = 0;
+        return -7; // DC_STATUS_TIMEOUT
+    }
+    if (actual) HEAP32[actual >> 2] = 0;
+    return res.status || -6;
 });
 
 EM_ASYNC_JS(int, js_serial_write, (const uint8_t *buffer, size_t size, size_t *actual), {
-    if (!Module.serialBridge || !Module.serialBridge.write) return -1;
+    if (!Module.serialBridge || !Module.serialBridge.write) return -6;
     const src = HEAPU8.subarray(buffer, buffer + size);
     const res = await Module.serialBridge.write(src, size);
     if (res.status === 0) {
         if (actual) HEAP32[actual >> 2] = res.bytesWritten;
         return 0;
     }
-    return res.status || -1;
+    return res.status || -6;
 });
 
 EM_ASYNC_JS(int, js_serial_sleep, (unsigned int ms), {
@@ -181,6 +197,8 @@ static void cb_event(dc_device_t *device, dc_event_type_t event, const void *dat
     if (event == DC_EVENT_PROGRESS) {
         const dc_event_progress_t *p = (const dc_event_progress_t *)data;
         js_emit_progress("reading", p->current, p->maximum);
+    } else if (event == DC_EVENT_WAITING) {
+        js_emit_progress("waiting", 0, 100);
     }
 }
 
@@ -471,7 +489,7 @@ int dc_bridge_download(const char *vendor, const char *product, const char *fing
     dc_descriptor_t *found = NULL;
     dc_descriptor_t *d = NULL;
     while (dc_iterator_next(it, (void **)&d) == DC_STATUS_SUCCESS) {
-        if (strcmp(dc_descriptor_get_vendor(d), vendor) == 0 &&
+        if (strcasecmp(dc_descriptor_get_vendor(d), vendor) == 0 &&
             strcmp(dc_descriptor_get_product(d), product) == 0) {
             found = d;
             break;
@@ -479,6 +497,25 @@ int dc_bridge_download(const char *vendor, const char *product, const char *fing
         dc_descriptor_free(d);
     }
     dc_iterator_free(it);
+
+    /* Fallback pass: case-insensitive substring/prefix match */
+    if (!found) {
+        if (dc_descriptor_iterator_new(&it, ctx) == DC_STATUS_SUCCESS) {
+            while (dc_iterator_next(it, (void **)&d) == DC_STATUS_SUCCESS) {
+                if (strcasecmp(dc_descriptor_get_vendor(d), vendor) == 0) {
+                    const char *p = dc_descriptor_get_product(d);
+                    if (strcasecmp(p, product) == 0 ||
+                        ci_contains(p, product) ||
+                        ci_contains(product, p)) {
+                        found = d;
+                        break;
+                    }
+                }
+                dc_descriptor_free(d);
+            }
+            dc_iterator_free(it);
+        }
+    }
 
     if (!found) {
         dc_context_free(ctx);
@@ -520,7 +557,7 @@ int dc_bridge_download(const char *vendor, const char *product, const char *fing
 
     /* Set cancel and event callbacks */
     dc_device_set_cancel(device, cb_cancel, NULL);
-    dc_device_set_events(device, DC_EVENT_PROGRESS, cb_event, NULL);
+    dc_device_set_events(device, DC_EVENT_PROGRESS | DC_EVENT_WAITING, cb_event, NULL);
 
     dive_collector_state_t state;
     memset(&state, 0, sizeof(state));

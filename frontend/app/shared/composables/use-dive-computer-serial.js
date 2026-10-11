@@ -18,12 +18,13 @@ export function useDiveComputerSerial() {
   let readChunks = [];
   let readWaiters = [];
   let isStreamOpen = false;
+  let currentConfig = null;
 
   function resetBuffers() {
     readChunks = [];
     for (const waiter of readWaiters) {
       if (waiter.timer) clearTimeout(waiter.timer);
-      waiter.reject(new Error("Buffer reset"));
+      waiter.resolve({ status: -10, bytesRead: 0 }); // -10 = DC_STATUS_CANCELLED
     }
     readWaiters = [];
   }
@@ -133,6 +134,7 @@ export function useDiveComputerSerial() {
 
     try {
       await activePort.value.open(serialOptions);
+      currentConfig = { ...serialOptions };
       isConnected.value = true;
       pumpIncomingData();
     } catch (err) {
@@ -154,7 +156,20 @@ export function useDiveComputerSerial() {
       flowControl: flowControlMap[flowControlEnum] || "none"
     };
 
-    if (!activePort.value) return -1;
+    if (!activePort.value) return -6; // DC_STATUS_IO
+
+    // Skip redundant reconnection if already configured with matching parameters
+    const isSameConfig =
+      currentConfig &&
+      currentConfig.baudRate === opts.baudRate &&
+      currentConfig.dataBits === opts.dataBits &&
+      currentConfig.parity === opts.parity &&
+      currentConfig.stopBits === opts.stopBits &&
+      currentConfig.flowControl === opts.flowControl;
+
+    if (isSameConfig && isConnected.value && isStreamOpen) {
+      return 0; // DC_STATUS_SUCCESS
+    }
 
     try {
       // Release locks, close, and re-open with new settings
@@ -178,50 +193,53 @@ export function useDiveComputerSerial() {
       }
       await activePort.value.close();
       await activePort.value.open(opts);
+      currentConfig = { ...opts };
       pumpIncomingData();
       return 0; // DC_STATUS_SUCCESS
     } catch (err) {
       lastError.value = err?.message || "Failed to reconfigure serial port";
-      return -1;
+      return -6; // DC_STATUS_IO
     }
   }
 
   async function setDtr(value) {
-    if (!activePort.value) return -1;
+    if (!activePort.value) return 0;
     try {
       await activePort.value.setSignals({ dataTerminalReady: Boolean(value) });
       return 0;
     } catch (err) {
-      lastError.value = err?.message || "Failed to set DTR line";
-      return -1;
+      console.warn("[WebSerial] Failed or unsupported setDtr:", err?.message || err);
+      // Return 0 so adapter without hardware handshake doesn't abort
+      return 0;
     }
   }
 
   async function setRts(value) {
-    if (!activePort.value) return -1;
+    if (!activePort.value) return 0;
     try {
       await activePort.value.setSignals({ requestToSend: Boolean(value) });
       return 0;
     } catch (err) {
-      lastError.value = err?.message || "Failed to set RTS line";
-      return -1;
+      console.warn("[WebSerial] Failed or unsupported setRts:", err?.message || err);
+      // Return 0 so adapter without hardware handshake doesn't abort
+      return 0;
     }
   }
 
   async function setBreak(value) {
-    if (!activePort.value) return -1;
+    if (!activePort.value) return 0;
     try {
       await activePort.value.setSignals({ break: Boolean(value) });
       return 0;
     } catch (err) {
-      lastError.value = err?.message || "Failed to set Break line";
-      return -1;
+      console.warn("[WebSerial] Failed or unsupported setBreak:", err?.message || err);
+      return 0;
     }
   }
 
   function readBytes(destSubarray, size, timeoutMs = 3000) {
     if (!activePort.value || !isStreamOpen) {
-      return Promise.resolve({ status: -1, bytesRead: 0 });
+      return Promise.resolve({ status: -6, bytesRead: 0 }); // -6 = DC_STATUS_IO
     }
 
     const available = totalBufferedBytes();
@@ -249,7 +267,7 @@ export function useDiveComputerSerial() {
         timer = setTimeout(() => {
           const idx = readWaiters.findIndex((w) => w.timer === timer);
           if (idx !== -1) readWaiters.splice(idx, 1);
-          resolve({ status: 4, bytesRead: 0 }); // 4 = DC_STATUS_TIMEOUT
+          resolve({ status: -7, bytesRead: 0 }); // -7 = DC_STATUS_TIMEOUT
         }, timeoutMs);
       }
 
@@ -265,7 +283,7 @@ export function useDiveComputerSerial() {
 
   async function writeBytes(srcSubarray, size) {
     if (!activePort.value || !activePort.value.writable) {
-      return { status: -1, bytesWritten: 0 };
+      return { status: -6, bytesWritten: 0 };
     }
     try {
       const writer = activePort.value.writable.getWriter();
@@ -275,7 +293,7 @@ export function useDiveComputerSerial() {
       return { status: 0, bytesWritten: size };
     } catch (err) {
       lastError.value = err?.message || "Failed to write bytes to serial port";
-      return { status: -1, bytesWritten: 0 };
+      return { status: -6, bytesWritten: 0 };
     }
   }
 
@@ -285,6 +303,7 @@ export function useDiveComputerSerial() {
 
   async function close() {
     isStreamOpen = false;
+    currentConfig = null;
     resetBuffers();
 
     if (streamReader) {
