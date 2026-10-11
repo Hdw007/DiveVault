@@ -52,7 +52,8 @@ export default {
       debugLogs: [],
       showDebugLogs: false,
       copiedLogs: false,
-      selectedDiveUids: []
+      selectedDiveUids: [],
+      forceFullDownload: false
     };
   },
   computed: {
@@ -163,6 +164,7 @@ export default {
       this.discoveredDives = [];
       this.selectedDiveUids = [];
       this.latestFingerprint = "";
+      this.forceFullDownload = false;
       this.importingDives = false;
       this.importedCount = 0;
       this.skippedCount = 0;
@@ -198,17 +200,21 @@ export default {
         // Step 3: Fetch last device state fingerprint
         this.progressMessage = "Checking previous sync state...";
         let prevFingerprint = "";
-        try {
-          const stateRes = await fetchDeviceState(this.apiClient, this.selectedVendor, this.selectedProduct);
-          if (stateRes.ok) {
-            const stateData = await stateRes.json();
-            prevFingerprint = stateData.fingerprint_hex || "";
-            if (prevFingerprint) {
-              this.addDebugLog("service", `Previous sync fingerprint: ${prevFingerprint}`);
+        if (!this.forceFullDownload) {
+          try {
+            const stateRes = await fetchDeviceState(this.apiClient, this.selectedVendor, this.selectedProduct);
+            if (stateRes.ok) {
+              const stateData = await stateRes.json();
+              prevFingerprint = stateData.fingerprint_hex || "";
+              if (prevFingerprint) {
+                this.addDebugLog("service", `Previous sync fingerprint: ${prevFingerprint}`);
+              }
             }
+          } catch {
+            // If state doesn't exist yet, start clean
           }
-        } catch {
-          // If state doesn't exist yet, start clean
+        } else {
+          this.addDebugLog("service", "Full download requested: ignoring previous sync fingerprint.");
         }
 
         // Step 4: Start download via libdivecomputer Wasm
@@ -464,6 +470,12 @@ export default {
             </select>
           </label>
         </div>
+
+        <!-- Sync Options -->
+        <label class="flex items-center gap-2 cursor-pointer text-xs text-secondary hover:text-on-surface">
+          <input type="checkbox" v-model="forceFullDownload" class="rounded border-primary/20 text-primary focus:ring-primary/30" />
+          <span>Force full download (ignore previous sync fingerprint)</span>
+        </label>
 
         <!-- Actions -->
         <div class="flex justify-end gap-3 pt-4 border-t border-primary/10">
