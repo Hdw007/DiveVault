@@ -70,6 +70,7 @@ export async function downloadDivesFromDevice({
   serialDriver,
   fingerprintHex = "",
   onProgress = null,
+  onLog = null,
   isCancelled = null
 }) {
   const mod = await loadDiveComputerModule();
@@ -79,6 +80,11 @@ export async function downloadDivesFromDevice({
 
   // Configure bridge callbacks
   mod.serialBridge = {
+    onLog(source, msg) {
+      if (typeof onLog === "function") {
+        onLog(source, msg);
+      }
+    },
     async configure(baudRate, dataBits, parity, stopBits, flowControl) {
       return serialDriver.configure(baudRate, dataBits, parity, stopBits, flowControl);
     },
@@ -116,6 +122,10 @@ export async function downloadDivesFromDevice({
         const meta = JSON.parse(metaJson);
         const rawBytes = mod.HEAPU8.slice(rawPtr, rawPtr + rawSize);
         const fpBytes = fpSize > 0 ? mod.HEAPU8.slice(fpPtr, fpPtr + fpSize) : null;
+
+        if (typeof onLog === "function") {
+          onLog("service", `onDive raw received: ${rawBytes.length} bytes, started: ${meta.started_at}, max_depth: ${meta.max_depth_m}m`);
+        }
 
         const p = (async () => {
           try {

@@ -117,6 +117,25 @@ EM_JS(void, js_emit_dive, (const char *json_meta, const uint8_t *raw_data, size_
     }
 });
 
+EM_JS(void, js_emit_log, (const char *source_str, const char *msg_str), {
+    if (Module.serialBridge && Module.serialBridge.onLog) {
+        Module.serialBridge.onLog(UTF8ToString(source_str), UTF8ToString(msg_str));
+    }
+});
+
+static void cb_log(dc_context_t *context, dc_loglevel_t loglevel, const char *file, unsigned int line, const char *function, const char *message, void *userdata) {
+    char buf[1024];
+    const char *lvl_name = "INFO";
+    switch (loglevel) {
+        case DC_LOGLEVEL_ERROR: lvl_name = "ERROR"; break;
+        case DC_LOGLEVEL_WARNING: lvl_name = "WARN"; break;
+        case DC_LOGLEVEL_DEBUG: lvl_name = "DEBUG"; break;
+        default: break;
+    }
+    snprintf(buf, sizeof(buf), "[%s] %s:%u (%s): %s", lvl_name, file ? file : "?", line, function ? function : "?", message ? message : "");
+    js_emit_log("ldc", buf);
+}
+
 EM_JS(void, js_emit_complete, (const char *fingerprint_hex, int count), {
     if (Module.serialBridge && Module.serialBridge.onComplete) {
         Module.serialBridge.onComplete(UTF8ToString(fingerprint_hex), count);
@@ -199,6 +218,17 @@ static void cb_event(dc_device_t *device, dc_event_type_t event, const void *dat
         js_emit_progress("reading", p->current, p->maximum);
     } else if (event == DC_EVENT_WAITING) {
         js_emit_progress("waiting", 0, 100);
+        js_emit_log("bridge", "Waiting for dive computer transmission (wet contacts)...");
+    } else if (event == DC_EVENT_DEVINFO) {
+        const dc_event_devinfo_t *d = (const dc_event_devinfo_t *)data;
+        char buf[128];
+        snprintf(buf, sizeof(buf), "Device info: model=0x%02X, firmware=%u, serial=%u", d->model, d->firmware, d->serial);
+        js_emit_log("bridge", buf);
+    } else if (event == DC_EVENT_CLOCK) {
+        const dc_event_clock_t *c = (const dc_event_clock_t *)data;
+        char buf[128];
+        snprintf(buf, sizeof(buf), "Device clock: devtime=%u, systime=%ld", c->devtime, (long)c->systime);
+        js_emit_log("bridge", buf);
     }
 }
 
@@ -342,10 +372,15 @@ typedef struct {
 
 static int cb_dive(const unsigned char *data, unsigned int size, const unsigned char *fp, unsigned int fsize, void *userdata) {
     dive_collector_state_t *st = (dive_collector_state_t *)userdata;
-    dc_parser_t *parser = NULL;
+    char log_buf[256];
+    snprintf(log_buf, sizeof(log_buf), "cb_dive invoked: dive #%d (raw_size=%u, fp_size=%u)", st->dive_count + 1, size, fsize);
+    js_emit_log("bridge", log_buf);
 
+    dc_parser_t *parser = NULL;
     dc_status_t rc = dc_parser_new(&parser, st->device, data, size);
     if (rc != DC_STATUS_SUCCESS) {
+        snprintf(log_buf, sizeof(log_buf), "dc_parser_new failed with status %d for dive #%d", rc, st->dive_count + 1);
+        js_emit_log("bridge", log_buf);
         return 1; /* Continue with other dives */
     }
 
@@ -399,6 +434,10 @@ static int cb_dive(const unsigned char *data, unsigned int size, const unsigned 
 
     /* Emit dive to JavaScript */
     js_emit_dive(meta.data, data, size, fp, fsize);
+
+    snprintf(log_buf, sizeof(log_buf), "Emitted dive #%d to JS: date=%s, divetime=%us, max_depth=%.2fm",
+             st->dive_count + 1, started_at, divetime, maxdepth);
+    js_emit_log("bridge", log_buf);
 
     /* Record latest fingerprint hex (newest dive is the first one emitted) */
     if (st->dive_count == 0 && fsize > 0 && fp) {
@@ -478,6 +517,9 @@ int dc_bridge_download(const char *vendor, const char *product, const char *fing
     dc_status_t rc = dc_context_new(&ctx);
     if (rc != DC_STATUS_SUCCESS) return rc;
 
+    dc_context_set_loglevel(ctx, DC_LOGLEVEL_ALL);
+    dc_context_set_logfunc(ctx, cb_log, NULL);
+
     /* Find matching descriptor */
     dc_iterator_t *it = NULL;
     rc = dc_descriptor_iterator_new(&it, ctx);
@@ -518,14 +560,23 @@ int dc_bridge_download(const char *vendor, const char *product, const char *fing
     }
 
     if (!found) {
+        js_emit_log("bridge", "No matching device descriptor found in libdivecomputer database.");
         dc_context_free(ctx);
         return DC_STATUS_NODEVICE;
     }
+
+    char desc_log[256];
+    snprintf(desc_log, sizeof(desc_log), "Descriptor matched: '%s' '%s' (type=%d, model=0x%02X)",
+             dc_descriptor_get_vendor(found), dc_descriptor_get_product(found),
+             dc_descriptor_get_type(found), dc_descriptor_get_model(found));
+    js_emit_log("bridge", desc_log);
 
     /* Open custom iostream stream connecting to WebSerial */
     dc_iostream_t *iostream = NULL;
     rc = dc_custom_open(&iostream, ctx, DC_TRANSPORT_SERIAL, &g_custom_cbs, &g_io_state);
     if (rc != DC_STATUS_SUCCESS) {
+        snprintf(desc_log, sizeof(desc_log), "dc_custom_open failed: status=%d", rc);
+        js_emit_log("bridge", desc_log);
         dc_descriptor_free(found);
         dc_context_free(ctx);
         return rc;
@@ -535,6 +586,8 @@ int dc_bridge_download(const char *vendor, const char *product, const char *fing
     dc_device_t *device = NULL;
     rc = dc_device_open(&device, ctx, found, iostream);
     if (rc != DC_STATUS_SUCCESS) {
+        snprintf(desc_log, sizeof(desc_log), "dc_device_open failed: status=%d", rc);
+        js_emit_log("bridge", desc_log);
         dc_iostream_close(iostream);
         dc_descriptor_free(found);
         dc_context_free(ctx);
@@ -543,6 +596,8 @@ int dc_bridge_download(const char *vendor, const char *product, const char *fing
 
     /* Set fingerprint if provided */
     if (fingerprint_hex && strlen(fingerprint_hex) > 0) {
+        snprintf(desc_log, sizeof(desc_log), "Setting filter fingerprint: '%s'", fingerprint_hex);
+        js_emit_log("bridge", desc_log);
         size_t hex_len = strlen(fingerprint_hex);
         if (hex_len % 2 == 0) {
             size_t fp_len = hex_len / 2;
@@ -553,11 +608,13 @@ int dc_bridge_download(const char *vendor, const char *product, const char *fing
             dc_device_set_fingerprint(device, fp_bytes, fp_len);
             free(fp_bytes);
         }
+    } else {
+        js_emit_log("bridge", "No initial fingerprint provided (full dump requested).");
     }
 
     /* Set cancel and event callbacks */
     dc_device_set_cancel(device, cb_cancel, NULL);
-    dc_device_set_events(device, DC_EVENT_PROGRESS | DC_EVENT_WAITING, cb_event, NULL);
+    dc_device_set_events(device, DC_EVENT_PROGRESS | DC_EVENT_WAITING | DC_EVENT_DEVINFO | DC_EVENT_CLOCK, cb_event, NULL);
 
     dive_collector_state_t state;
     memset(&state, 0, sizeof(state));
@@ -566,9 +623,14 @@ int dc_bridge_download(const char *vendor, const char *product, const char *fing
     state.product = product;
 
     js_emit_progress("starting", 0, 100);
+    js_emit_log("bridge", "Starting dc_device_foreach download loop...");
 
     /* Foreach dive download */
     rc = dc_device_foreach(device, cb_dive, &state);
+
+    snprintf(desc_log, sizeof(desc_log), "dc_device_foreach finished: rc=%d, dives_emitted=%d, latest_fp='%s'",
+             rc, state.dive_count, state.latest_fingerprint);
+    js_emit_log("bridge", desc_log);
 
     /* Notify completion */
     js_emit_complete(state.latest_fingerprint, state.dive_count);

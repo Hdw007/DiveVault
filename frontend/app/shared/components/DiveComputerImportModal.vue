@@ -48,7 +48,10 @@ export default {
       importingDives: false,
       importedCount: 0,
       skippedCount: 0,
-      isCancelled: false
+      isCancelled: false,
+      debugLogs: [],
+      showDebugLogs: false,
+      copiedLogs: false
     };
   },
   computed: {
@@ -158,6 +161,12 @@ export default {
       this.errorMessage = "";
       this.isCancelled = false;
       this.discoveredDives = [];
+      this.debugLogs = [];
+      this.showDebugLogs = true;
+
+      if (typeof this.serial.setLogCallback === "function") {
+        this.serial.setLogCallback((source, msg) => this.addDebugLog(source, msg));
+      }
 
       try {
         // Step 1: Request serial port via user gesture
@@ -177,6 +186,9 @@ export default {
           if (stateRes.ok) {
             const stateData = await stateRes.json();
             prevFingerprint = stateData.fingerprint_hex || "";
+            if (prevFingerprint) {
+              this.addDebugLog("service", `Previous sync fingerprint: ${prevFingerprint}`);
+            }
           }
         } catch {
           // If state doesn't exist yet, start clean
@@ -197,6 +209,7 @@ export default {
           product: this.selectedProduct,
           serialDriver: this.serial,
           fingerprintHex: prevFingerprint,
+          onLog: (source, msg) => this.addDebugLog(source, msg),
           onProgress: (p) => {
             this.progressStage = p.stage;
             this.progressCurrent = p.current;
@@ -302,6 +315,43 @@ export default {
         dives: this.discoveredDives
       });
       this.closeModal();
+    },
+    addDebugLog(source, message) {
+      const now = new Date();
+      const timeStr = now.toTimeString().split(" ")[0] + "." + String(now.getMilliseconds()).padStart(3, "0");
+      this.debugLogs.push({
+        id: Date.now() + Math.random(),
+        time: timeStr,
+        source: String(source).toLowerCase(),
+        message: String(message)
+      });
+      if (this.debugLogs.length > 600) {
+        this.debugLogs.shift();
+      }
+      this.$nextTick(() => {
+        const el = this.$refs.debugLogContainer;
+        if (el) {
+          el.scrollTop = el.scrollHeight;
+        }
+      });
+    },
+    async copyDebugLogs() {
+      const text = this.debugLogs.map((l) => `[${l.time}] [${l.source.toUpperCase()}] ${l.message}`).join("\n");
+      try {
+        await navigator.clipboard.writeText(text);
+        this.copiedLogs = true;
+        setTimeout(() => {
+          this.copiedLogs = false;
+        }, 2000);
+      } catch (err) {
+        console.error("Clipboard copy failed:", err);
+      }
+    },
+    clearDebugLogs() {
+      this.debugLogs = [];
+    },
+    toggleDebugLogs() {
+      this.showDebugLogs = !this.showDebugLogs;
     }
   }
 };
@@ -489,6 +539,65 @@ export default {
 
         <div class="pt-4 flex justify-center gap-3">
           <UButton type="button" @click="handleDone" class="settings-button settings-button-primary"> Done </UButton>
+        </div>
+      </div>
+
+      <!-- Live Debug Console -->
+      <div class="mt-6 border-t border-primary/10 pt-4">
+        <div class="flex items-center justify-between text-xs">
+          <button
+            type="button"
+            @click="toggleDebugLogs"
+            class="flex items-center gap-1.5 font-mono font-medium text-secondary hover:text-on-surface transition-colors"
+          >
+            <span class="material-symbols-outlined text-base transition-transform duration-200" :class="{ 'rotate-90': showDebugLogs }">
+              chevron_right
+            </span>
+            <span>Debug Log ({{ debugLogs.length }} lines)</span>
+          </button>
+
+          <div v-if="debugLogs.length > 0" class="flex items-center gap-2">
+            <button
+              type="button"
+              @click="copyDebugLogs"
+              class="flex items-center gap-1 rounded bg-surface-container-high px-2 py-1 text-[11px] font-medium text-on-surface hover:bg-surface-container-highest transition-colors"
+            >
+              <span class="material-symbols-outlined text-xs">{{ copiedLogs ? "check" : "content_copy" }}</span>
+              <span>{{ copiedLogs ? "Copied!" : "Copy Logs" }}</span>
+            </button>
+            <button
+              type="button"
+              @click="clearDebugLogs"
+              class="rounded bg-surface-container-high px-2 py-1 text-[11px] font-medium text-secondary hover:text-on-surface hover:bg-surface-container-highest transition-colors"
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+
+        <div
+          v-if="showDebugLogs"
+          ref="debugLogContainer"
+          class="mt-3 max-h-48 overflow-y-auto rounded-lg border border-primary/20 bg-black/85 p-3 font-mono text-[11px] leading-relaxed text-slate-300 select-text"
+        >
+          <div v-if="debugLogs.length === 0" class="text-slate-500 italic">
+            No log entries yet. Connect a dive computer to inspect raw transfer logs.
+          </div>
+          <div v-for="log in debugLogs" :key="log.id" class="flex items-start gap-2 py-0.5 hover:bg-white/5">
+            <span class="text-slate-500 shrink-0 select-none">{{ log.time }}</span>
+            <span
+              class="rounded px-1 text-[10px] uppercase font-bold shrink-0"
+              :class="{
+                'bg-cyan-950 text-cyan-400 border border-cyan-800/50': log.source === 'serial',
+                'bg-purple-950 text-purple-400 border border-purple-800/50': log.source === 'wasm' || log.source === 'bridge',
+                'bg-amber-950 text-amber-400 border border-amber-800/50': log.source === 'libdc',
+                'bg-emerald-950 text-emerald-400 border border-emerald-800/50': log.source === 'service'
+              }"
+            >
+              {{ log.source }}
+            </span>
+            <span class="break-all whitespace-pre-wrap">{{ log.message }}</span>
+          </div>
         </div>
       </div>
     </div>
