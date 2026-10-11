@@ -412,13 +412,20 @@ static int cb_dive(const unsigned char *data, unsigned int size, const unsigned 
     dc_parser_get_field(parser, DC_FIELD_AVGDEPTH, 0, &avgdepth);
 
     double temp_min = 0.0;
-    int has_temp = (dc_parser_get_field(parser, DC_FIELD_TEMPERATURE_MINIMUM, 0, &temp_min) == DC_STATUS_SUCCESS);
+    int has_temp_min = (dc_parser_get_field(parser, DC_FIELD_TEMPERATURE_MINIMUM, 0, &temp_min) == DC_STATUS_SUCCESS);
+
+    double temp_surf = 0.0;
+    int has_temp_surf = (dc_parser_get_field(parser, DC_FIELD_TEMPERATURE_SURFACE, 0, &temp_surf) == DC_STATUS_SUCCESS);
+
+    double temp_max = 0.0;
+    int has_temp_max = (dc_parser_get_field(parser, DC_FIELD_TEMPERATURE_MAXIMUM, 0, &temp_max) == DC_STATUS_SUCCESS);
 
     double atmospheric = 0.0;
     int has_atm = (dc_parser_get_field(parser, DC_FIELD_ATMOSPHERIC, 0, &atmospheric) == DC_STATUS_SUCCESS);
 
     /* Collect samples */
     sample_collector_t sc;
+    memset(&sc, 0, sizeof(sc));
     json_buf_init(&sc.buf);
     sc.first_sample = 1;
     sc.has_active_sample = 0;
@@ -435,12 +442,61 @@ static int cb_dive(const unsigned char *data, unsigned int size, const unsigned 
                     started_at, divetime, maxdepth, avgdepth);
     json_buf_append(&meta, ",\"fields\":{\"divetime_seconds\":%u,\"max_depth_m\":%.2f,\"avg_depth_m\":%.2f",
                     divetime, maxdepth, avgdepth);
-    if (has_temp) {
-        json_buf_append(&meta, ",\"water_temperature_c\":%.1f", temp_min);
+    if (has_temp_min) {
+        json_buf_append(&meta, ",\"temperature_minimum_c\":%.1f,\"water_temperature_c\":%.1f", temp_min, temp_min);
+    }
+    if (has_temp_surf) {
+        json_buf_append(&meta, ",\"temperature_surface_c\":%.1f", temp_surf);
+    } else if (has_temp_min) {
+        json_buf_append(&meta, ",\"temperature_surface_c\":%.1f", temp_min);
+    }
+    if (has_temp_max) {
+        json_buf_append(&meta, ",\"temperature_maximum_c\":%.1f", temp_max);
+    } else if (has_temp_min) {
+        json_buf_append(&meta, ",\"temperature_maximum_c\":%.1f", temp_min);
     }
     if (has_atm) {
         json_buf_append(&meta, ",\"atmospheric_bar\":%.3f", atmospheric);
     }
+
+    /* Tanks */
+    unsigned int tank_count = 0;
+    dc_status_t rc_tc = dc_parser_get_field(parser, DC_FIELD_TANK_COUNT, 0, &tank_count);
+    if (rc_tc != DC_STATUS_SUCCESS || tank_count == 0) {
+        dc_tank_t t0 = {0};
+        if (dc_parser_get_field(parser, DC_FIELD_TANK, 0, &t0) == DC_STATUS_SUCCESS && (t0.beginpressure > 0.0 || t0.endpressure > 0.0)) {
+            tank_count = 1;
+        }
+    }
+    if (tank_count > 0) {
+        json_buf_append(&meta, ",\"tanks\":[");
+        int emitted_tanks = 0;
+        for (unsigned int ti = 0; ti < tank_count; ti++) {
+            dc_tank_t tank = {0};
+            if (dc_parser_get_field(parser, DC_FIELD_TANK, ti, &tank) == DC_STATUS_SUCCESS) {
+                if (emitted_tanks > 0) json_buf_append(&meta, ",");
+                json_buf_append(&meta, "{\"beginpressure_bar\":%.1f,\"endpressure_bar\":%.1f",
+                                tank.beginpressure, tank.endpressure);
+                if (tank.volume > 0.0) {
+                    json_buf_append(&meta, ",\"volume\":%.1f", tank.volume);
+                }
+                if (tank.workpressure > 0.0) {
+                    json_buf_append(&meta, ",\"workpressure_bar\":%.1f", tank.workpressure);
+                }
+                json_buf_append(&meta, "}");
+                emitted_tanks++;
+            }
+        }
+        json_buf_append(&meta, "]");
+    }
+
+    /* Gasmixes */
+    dc_gasmix_t gasmix = {0};
+    if (dc_parser_get_field(parser, DC_FIELD_GASMIX, 0, &gasmix) == DC_STATUS_SUCCESS && gasmix.oxygen > 0.0) {
+        json_buf_append(&meta, ",\"gasmixes\":[{\"oxygen_fraction\":%.3f,\"helium_fraction\":%.3f}]",
+                        gasmix.oxygen, gasmix.helium);
+    }
+
     json_buf_append(&meta, "},\"samples\":%s}", sc.buf.data);
 
     /* Emit dive to JavaScript */

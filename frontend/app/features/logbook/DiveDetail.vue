@@ -684,6 +684,178 @@ export default {
 
         <div class="grid grid-cols-12 gap-6">
           <section class="col-span-12 space-y-6 xl:col-span-8">
+            <section v-if="hasDepthProfile" class="rounded-[1.5rem] border border-primary/10 bg-surface-container-low/82 p-6 shadow-panel">
+              <div class="mb-6 flex items-center justify-between">
+                <h4 class="flex items-center gap-3 font-headline text-xl font-bold">
+                  <span class="material-symbols-outlined text-primary">analytics</span>
+                  Profile Analysis
+                </h4>
+                <div class="flex gap-4">
+                  <div class="flex items-center gap-1.5">
+                    <div class="h-2.5 w-2.5 rounded-full bg-primary"></div>
+                    <span class="font-label text-[10px] uppercase tracking-[0.14em] text-on-surface-variant">Depth</span>
+                  </div>
+                  <div v-if="hasPressureProfile" class="flex items-center gap-1.5">
+                    <div class="h-2.5 w-2.5 rounded-full border border-tertiary border-dashed"></div>
+                    <span class="font-label text-[10px] uppercase tracking-[0.14em] text-on-surface-variant">Air</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="relative overflow-hidden rounded-xl bg-surface-container-low p-4">
+                <div class="absolute inset-0 technical-grid opacity-[0.05]"></div>
+                <div class="relative grid grid-cols-[auto_1fr_auto] gap-3">
+                  <div class="relative h-64 w-12 pr-1 text-right">
+                    <span
+                      v-for="(label, index) in depthAxisLabels"
+                      :key="'desktop-depth-' + label"
+                      class="absolute right-1 font-label text-[9px] font-bold uppercase tracking-[0.14em] text-on-surface-variant/60 -translate-y-1/2"
+                      :style="profileAxisTickStyle(index)"
+                      >{{ label }}</span
+                    >
+                  </div>
+                  <div class="relative h-64">
+                    <svg class="h-64 w-full" viewBox="0 0 800 250" preserveAspectRatio="none">
+                      <line x1="0" x2="800" y1="10" y2="10" stroke="#c1c7d1" stroke-width="1" stroke-dasharray="4" opacity="0.15"></line>
+                      <line x1="0" x2="800" y1="56" y2="56" stroke="#c1c7d1" stroke-width="1" stroke-dasharray="4" opacity="0.15"></line>
+                      <line x1="0" x2="800" y1="102" y2="102" stroke="#c1c7d1" stroke-width="1" stroke-dasharray="4" opacity="0.15"></line>
+                      <line x1="0" x2="800" y1="148" y2="148" stroke="#c1c7d1" stroke-width="1" stroke-dasharray="4" opacity="0.15"></line>
+                      <line x1="0" x2="800" y1="194" y2="194" stroke="#c1c7d1" stroke-width="1" stroke-dasharray="4" opacity="0.15"></line>
+                      <line x1="0" x2="800" y1="240" y2="240" stroke="#c1c7d1" stroke-width="1" stroke-dasharray="4" opacity="0.15"></line>
+                      <path :d="depthProfile.area" :fill="'url(#' + gradientId + ')'" opacity="0.9"></path>
+                      <path :d="depthProfile.line" fill="none" stroke="#9CCAFF" stroke-width="2.5" stroke-linejoin="round"></path>
+                      <path
+                        v-if="hasPressureProfile"
+                        :d="pressureProfile"
+                        fill="none"
+                        stroke="#FFB77D"
+                        stroke-width="2"
+                        stroke-dasharray="5"
+                      ></path>
+                      <line
+                        v-if="profileHover"
+                        :x1="profileHover.x"
+                        :x2="profileHover.x"
+                        y1="10"
+                        y2="240"
+                        stroke="#d9ecff"
+                        stroke-width="1.5"
+                        stroke-dasharray="4"
+                        opacity="0.45"
+                      ></line>
+                      <circle
+                        v-if="profileHover"
+                        :cx="profileHover.x"
+                        :cy="profileHover.depthY"
+                        r="4.5"
+                        fill="#9CCAFF"
+                        stroke="#0b2940"
+                        stroke-width="2"
+                      ></circle>
+                      <circle
+                        v-if="hasPressureProfile && profileHover && profileHover.pressureY !== null"
+                        :cx="profileHover.x"
+                        :cy="profileHover.pressureY"
+                        r="4.5"
+                        fill="#FFB77D"
+                        stroke="#0b2940"
+                        stroke-width="2"
+                      ></circle>
+                      <rect
+                        x="0"
+                        y="0"
+                        width="800"
+                        height="250"
+                        fill="transparent"
+                        @mousemove="updateProfileHover"
+                        @mouseleave="clearProfileHover"
+                      ></rect>
+                      <defs>
+                        <linearGradient :id="gradientId" x1="0" x2="0" y1="0" y2="1">
+                          <stop offset="0%" stop-color="#80bdfe" stop-opacity="0.26"></stop>
+                          <stop offset="100%" stop-color="#80bdfe" stop-opacity="0"></stop>
+                        </linearGradient>
+                      </defs>
+                    </svg>
+                    <div
+                      v-if="profileHover"
+                      class="pointer-events-none absolute z-10 min-w-[8.5rem] rounded-lg border border-primary/18 bg-background/92 px-3 py-2 text-left shadow-[0_12px_28px_rgba(0,0,0,0.3)] backdrop-blur-sm"
+                      :style="profileHoverTooltipStyle"
+                    >
+                      <p class="font-label text-[8px] font-bold uppercase tracking-[0.16em] text-secondary">{{ profileHover.timeLabel }}</p>
+                      <p class="mt-1 text-xs font-semibold text-primary">Depth: {{ profileHover.depthLabel }}</p>
+                      <p v-if="profileHover.pressureLabel" class="mt-1 text-xs font-semibold text-tertiary">
+                        Air: {{ profileHover.pressureLabel }}
+                      </p>
+                    </div>
+                  </div>
+                  <div v-if="hasPressureProfile" class="relative h-64 w-14 pl-1">
+                    <span
+                      v-for="(label, index) in pressureAxisLabels"
+                      :key="'desktop-pressure-' + label"
+                      class="absolute left-1 font-label text-[9px] font-bold uppercase tracking-[0.14em] text-on-surface-variant/60 -translate-y-1/2"
+                      :style="profileAxisTickStyle(index)"
+                      >{{ label }}</span
+                    >
+                  </div>
+                </div>
+                <div
+                  class="relative mt-3 flex items-center justify-between font-label text-[9px] font-bold uppercase tracking-[0.16em] text-on-surface-variant/50"
+                >
+                  <span v-for="label in timeLabels" :key="'desktop-time-' + label">{{ label }}</span>
+                </div>
+              </div>
+            </section>
+
+            <section
+              v-else-if="isLoadingSamples"
+              class="rounded-[1.5rem] border border-primary/10 bg-surface-container-low/82 p-6 shadow-panel"
+            >
+              <div class="mb-6 flex items-center justify-between">
+                <h4 class="flex items-center gap-3 font-headline text-xl font-bold">
+                  <span class="material-symbols-outlined text-primary">analytics</span>
+                  Profile Analysis
+                </h4>
+              </div>
+              <div class="flex h-64 items-center justify-center rounded-xl bg-surface-container-low p-4 animate-pulse">
+                <span class="font-label text-sm uppercase tracking-wider text-on-surface-variant/70"
+                  >Loading dive profile telemetry...</span
+                >
+              </div>
+            </section>
+
+            <section v-if="hasCheckpoints" class="rounded-[1.5rem] border border-primary/10 bg-surface-container-low/82 p-6 shadow-panel">
+              <div class="mb-4 flex items-center justify-between">
+                <h4 class="flex items-center gap-3 font-headline text-xl font-bold">
+                  <span class="material-symbols-outlined text-primary">flag</span>
+                  Dive Checkpoints
+                </h4>
+                <span
+                  class="rounded-full bg-surface-container-high px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-primary"
+                  >{{ checkpoints.length }} events</span
+                >
+              </div>
+              <div class="grid grid-cols-2 gap-4 xl:grid-cols-4">
+                <article v-for="card in checkpoints" :key="'desktop-cp-' + card.title" class="rounded-xl bg-surface-container-high/70 p-4">
+                  <p class="font-label text-[10px] font-bold uppercase tracking-[0.16em] text-secondary">{{ card.title }}</p>
+                  <div class="mt-4 space-y-2">
+                    <div>
+                      <p class="font-label text-[9px] uppercase tracking-[0.14em] text-on-surface-variant">Time</p>
+                      <p class="font-headline text-xl font-bold text-on-surface">{{ card.time }}</p>
+                    </div>
+                    <div>
+                      <p class="font-label text-[9px] uppercase tracking-[0.14em] text-on-surface-variant">Depth</p>
+                      <p class="text-sm font-bold text-primary">{{ card.depth }}</p>
+                    </div>
+                    <div>
+                      <p class="font-label text-[9px] uppercase tracking-[0.14em] text-on-surface-variant">Pressure</p>
+                      <p class="text-sm font-bold text-tertiary">{{ card.pressure }}</p>
+                    </div>
+                  </div>
+                </article>
+              </div>
+            </section>
+
             <section
               v-if="hasLogbookMetadata"
               class="rounded-[1.5rem] border border-primary/10 bg-surface-container-low/82 p-6 shadow-panel"

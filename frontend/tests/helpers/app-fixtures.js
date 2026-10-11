@@ -232,7 +232,7 @@ function updateDiveLogbook(data, diveId, payload) {
       }
     }
     if (payload.begin_pressure_bar !== undefined) {
-      if (payload.begin_pressure_bar) {
+      if (payload.begin_pressure_bar !== null && payload.begin_pressure_bar !== "" && Number.isFinite(Number(payload.begin_pressure_bar))) {
         const val = Number(payload.begin_pressure_bar);
         updated.beginpressure_bar = val;
         updated.begin_pressure_bar = val;
@@ -242,7 +242,7 @@ function updateDiveLogbook(data, diveId, payload) {
       }
     }
     if (payload.end_pressure_bar !== undefined) {
-      if (payload.end_pressure_bar) {
+      if (payload.end_pressure_bar !== null && payload.end_pressure_bar !== "" && Number.isFinite(Number(payload.end_pressure_bar))) {
         const val = Number(payload.end_pressure_bar);
         updated.endpressure_bar = val;
         updated.end_pressure_bar = val;

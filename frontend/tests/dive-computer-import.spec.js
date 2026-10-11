@@ -339,4 +339,57 @@ test("decodes and imports real Aladin Air 2KB dump via WebAssembly and Web Seria
   // Click Done
   await page.getByRole("button", { name: "Done" }).click();
   await expect(page.getByRole("heading", { name: "Connect Dive Computer" })).not.toBeVisible();
+
+  // Verify decoded temperature is displayed in the import queue
+  await expect(page.locator("p:text('28C'):visible").first()).toBeVisible();
+
+  // Open the Aladin Air imported dive for review and completion
+  const aladinImportCard = page.locator("article:visible").filter({ hasText: "Uwatec Aladin Air" }).first();
+  await aladinImportCard.getByRole("button", { name: "Edit Imported Dive" }).click();
+  await expect(page.getByRole("heading", { name: "Edit Imported Dive" })).toBeVisible();
+
+  // Fill required dive site and complete the record into the permanent logbook
+  await page.locator("input[placeholder='Blue Hole / House Reef']:visible").fill("House Reef");
+  await page.getByRole("button", { name: "Complete Record" }).click();
+
+  // Navigate to Dive Logs
+  await page.getByRole("button", { name: "Dive Logs" }).click();
+  await expect(page).toHaveURL(/\/logs$/);
+
+  // Find the committed dive card in the logbook
+  const houseReefCard = page.locator("article[role='button']:visible").filter({ hasText: "House Reef" }).first();
+  await expect(houseReefCard).toBeVisible();
+
+  // Verify Air consumed and Temperature in logbook overview card
+  await expect(houseReefCard.locator("strong:text('28C')")).toBeVisible();
+  await expect(houseReefCard.locator("strong:text('98 bar')")).toBeVisible();
+
+  // Open the dive details view
+  await houseReefCard.click();
+
+  // Verify desktop dive detail displays Air Consumed and Avg Temp hero metrics
+  await expect(page.getByRole("heading", { name: "House Reef" }).first()).toBeVisible();
+  const airConsumedTile = page
+    .locator("div:visible")
+    .filter({ has: page.locator("p:text('Air Consumed')") })
+    .first();
+  await expect(airConsumedTile).toContainText("98 bar");
+  const avgTempTile = page
+    .locator("div:visible")
+    .filter({ has: page.locator("p:text('Avg Temp')") })
+    .first();
+  await expect(avgTempTile).toContainText("28");
+  await expect(avgTempTile).toContainText("C");
+
+  // Verify Profile Analysis chart is rendered with telemetry points
+  await expect(page.locator("h4:visible", { hasText: "Profile Analysis" })).toBeVisible();
+  const profileLine = page.locator("path[stroke='#9CCAFF']:visible");
+  await expect(profileLine).toBeVisible();
+  const pathD = await profileLine.getAttribute("d");
+  expect(pathD).toBeTruthy();
+  expect(pathD?.startsWith("M")).toBe(true);
+
+  // Verify Technical Telemetry and Equipment tags show air used and sample points
+  await expect(page.locator("p:text('98 bar used')").first()).toBeVisible();
+  await expect(page.locator("p:text('113 telemetry points'):visible").first()).toBeVisible();
 });

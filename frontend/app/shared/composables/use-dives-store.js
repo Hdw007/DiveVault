@@ -456,8 +456,8 @@ async function persistLogbookUpdate(diveId, draft, commit = false, apiClient = n
   const response = await updateDiveLogbook(client, diveId, {
     commit,
     tank_volume_l: draft.tank_volume_l || null,
-    begin_pressure_bar: draft.begin_pressure_bar || null,
-    end_pressure_bar: draft.end_pressure_bar || null,
+    begin_pressure_bar: beginPressure,
+    end_pressure_bar: endPressure,
     logbook: {
       site: draft.site,
       buddy: draft.buddy,

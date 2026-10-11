@@ -90,7 +90,7 @@ function formatDepthNumber(value) {
 }
 
 function surfaceTemperature(dive) {
-  const fieldTemp = dive?.fields?.temperature_surface_c;
+  const fieldTemp = dive?.fields?.temperature_surface_c ?? dive?.fields?.water_temperature_c ?? dive?.fields?.temperature_minimum_c;
   if (typeof fieldTemp === "number") return fieldTemp;
   const samples = dive?.samples || [];
   const sampleWithTemp = samples.find((sample) => typeof sample.temperature_c === "number");
@@ -420,7 +420,14 @@ function tankLabel(tank) {
   if (!tank) return "Tank data unavailable";
   const volume = numberOrZero(tank.volume);
   const workPressure = tank.workpressure_bar;
-  return workPressure ? `${volume.toFixed(1)}L / ${Math.round(workPressure)} bar` : `${volume.toFixed(1)}L cylinder`;
+  if (volume > 0) {
+    return workPressure ? `${volume.toFixed(1)}L / ${Math.round(workPressure)} bar` : `${volume.toFixed(1)}L cylinder`;
+  }
+  const begin = tank.beginpressure_bar ?? tank.begin_pressure_bar;
+  if (typeof begin === "number" && begin > 0) {
+    return `${Math.round(begin)} bar cylinder`;
+  }
+  return "Standard cylinder";
 }
 
 function firstPressureValue(sample) {
@@ -499,6 +506,7 @@ function pressureRange(dive) {
 function pressureRangeLabel(dive) {
   const range = pressureRange(dive);
   if (typeof range.begin !== "number" || typeof range.end !== "number") return "--";
+  if (range.end === 0 && range.begin > 0) return `${Math.round(range.begin)} bar used`;
   return `${Math.round(range.begin)} / ${Math.round(range.end)} bar`;
 }
 
@@ -615,7 +623,7 @@ function axisTicks(maxValue, formatter, reverse = false) {
 }
 
 function minimumTemperature(dive) {
-  const fieldValue = dive?.fields?.temperature_minimum_c;
+  const fieldValue = dive?.fields?.temperature_minimum_c ?? dive?.fields?.water_temperature_c ?? dive?.fields?.temperature_surface_c;
   if (typeof fieldValue === "number") return fieldValue;
   const samples = diveSamples(dive)
     .map((sample) => sample.temperature_c)
@@ -624,7 +632,7 @@ function minimumTemperature(dive) {
 }
 
 function maximumTemperature(dive) {
-  const fieldValue = dive?.fields?.temperature_maximum_c;
+  const fieldValue = dive?.fields?.temperature_maximum_c ?? dive?.fields?.water_temperature_c ?? dive?.fields?.temperature_surface_c;
   if (typeof fieldValue === "number") return fieldValue;
   const samples = diveSamples(dive)
     .map((sample) => sample.temperature_c)

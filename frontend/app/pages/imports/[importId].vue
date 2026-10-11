@@ -30,7 +30,9 @@ watch(
 );
 
 onBeforeUnmount(() => {
-  divesStore.selectedImportId = null;
+  if (String(divesStore.selectedImportId) === String(importId.value)) {
+    divesStore.selectedImportId = null;
+  }
 });
 
 watch([() => divesStore.isLoading, () => divesStore.dives], ([loading, dives]) => {
