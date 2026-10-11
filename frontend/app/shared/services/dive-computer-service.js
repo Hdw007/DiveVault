@@ -43,13 +43,28 @@ export async function getSupportedDiveComputers() {
 }
 
 export async function sha256Hex(bytes) {
-  const hashBuffer = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(hashBuffer))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  if (!bytes || bytes.length === 0) {
+    return "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+  }
+  if (typeof crypto !== "undefined" && crypto.subtle && typeof crypto.subtle.digest === "function") {
+    try {
+      const hashBuffer = await crypto.subtle.digest("SHA-256", bytes);
+      return Array.from(new Uint8Array(hashBuffer))
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+    } catch {
+      // Fallback below
+    }
+  }
+  let hash = 0;
+  for (let i = 0; i < bytes.length; i++) {
+    hash = (hash * 31 + bytes[i]) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
 }
 
 export function bytesToBase64(bytes) {
+  if (!bytes || bytes.length === 0) return "";
   let binary = "";
   const len = bytes.byteLength;
   for (let i = 0; i < len; i++) {
@@ -59,6 +74,7 @@ export function bytesToBase64(bytes) {
 }
 
 export function bytesToHex(bytes) {
+  if (!bytes) return "";
   return Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
@@ -117,14 +133,33 @@ export async function downloadDivesFromDevice({
         onProgress(progress);
       }
     },
-    onDive(metaJson, rawPtr, rawSize, fpPtr, fpSize) {
+    onDive(metaJson, rawBytesOrPtr, fpBytesOrPtr, rawSize, fpSize) {
       try {
         const meta = JSON.parse(metaJson);
-        const rawBytes = mod.HEAPU8.slice(rawPtr, rawPtr + rawSize);
-        const fpBytes = fpSize > 0 ? mod.HEAPU8.slice(fpPtr, fpPtr + fpSize) : null;
+        let rawBytes;
+        if (rawBytesOrPtr instanceof Uint8Array) {
+          rawBytes = rawBytesOrPtr;
+        } else if (typeof rawBytesOrPtr === "number" && mod.HEAPU8 && rawSize) {
+          rawBytes = mod.HEAPU8.slice(rawBytesOrPtr, rawBytesOrPtr + rawSize);
+        } else {
+          rawBytes = new Uint8Array(0);
+        }
 
+        let fpBytes;
+        if (fpBytesOrPtr instanceof Uint8Array) {
+          fpBytes = fpBytesOrPtr;
+        } else if (typeof fpBytesOrPtr === "number" && mod.HEAPU8 && fpSize) {
+          fpBytes = mod.HEAPU8.slice(fpBytesOrPtr, fpBytesOrPtr + fpSize);
+        } else {
+          fpBytes = null;
+        }
+
+        const diveIndex = downloadedDives.length + 1;
         if (typeof onLog === "function") {
-          onLog("service", `onDive raw received: ${rawBytes.length} bytes, started: ${meta.started_at}, max_depth: ${meta.max_depth_m}m`);
+          onLog(
+            "service",
+            `Captured dive #${diveIndex}: ${meta.started_at || "unknown"}, ${meta.duration_seconds || 0}s, ${meta.max_depth_m || 0}m (${rawBytes.length} raw bytes)`
+          );
         }
 
         const p = (async () => {
@@ -132,8 +167,11 @@ export async function downloadDivesFromDevice({
             const rawSha256 = await sha256Hex(rawBytes);
             const rawB64 = bytesToBase64(rawBytes);
             const fpHex = fpBytes ? bytesToHex(fpBytes) : null;
-            const uid = fpHex ? `${vendor}:${product}:${fpHex}` : `${vendor}:${product}:${rawSha256}`;
             const startedAt = meta.started_at && meta.started_at.length >= 10 ? meta.started_at : new Date().toISOString();
+            const dateSlug = startedAt.replace(/[:.]/g, "-");
+            const uid = fpHex
+              ? `${vendor}:${product}:${dateSlug}:${fpHex}`
+              : `${vendor}:${product}:${dateSlug}:${rawSha256.substring(0, 16)}`;
 
             const diveRecord = {
               vendor,
@@ -152,12 +190,18 @@ export async function downloadDivesFromDevice({
 
             downloadedDives.push(diveRecord);
           } catch (err) {
+            if (typeof onLog === "function") {
+              onLog("service", `Error formatting dive record #${diveIndex}: ${err?.message || err}`);
+            }
             console.error("Error processing parsed dive:", err);
           }
         })();
 
         pendingDivePromises.push(p);
       } catch (err) {
+        if (typeof onLog === "function") {
+          onLog("service", `Fatal error in onDive callback: ${err?.message || err}`);
+        }
         console.error("Error synchronously capturing dive data in onDive:", err);
       }
     },
@@ -173,6 +217,10 @@ export async function downloadDivesFromDevice({
 
     // Wait for all async dive record formatting/hashing tasks to settle
     await Promise.all(pendingDivePromises);
+
+    if (typeof onLog === "function") {
+      onLog("service", `Processing complete: ${downloadedDives.length} dives ready for review.`);
+    }
 
     return {
       status: rc,

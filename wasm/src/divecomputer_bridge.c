@@ -113,7 +113,15 @@ EM_JS(void, js_emit_progress, (const char *stage_str, unsigned int current, unsi
 
 EM_JS(void, js_emit_dive, (const char *json_meta, const uint8_t *raw_data, size_t raw_size, const uint8_t *fp_data, size_t fp_size), {
     if (Module.serialBridge && Module.serialBridge.onDive) {
-        Module.serialBridge.onDive(UTF8ToString(json_meta), raw_data, raw_size, fp_data, fp_size);
+        try {
+            const rawBytes = (raw_data && raw_size > 0 && typeof HEAPU8 !== 'undefined') ? HEAPU8.slice(raw_data, raw_data + raw_size) : new Uint8Array(0);
+            const fpBytes = (fp_data && fp_size > 0 && typeof HEAPU8 !== 'undefined') ? HEAPU8.slice(fp_data, fp_data + fp_size) : null;
+            Module.serialBridge.onDive(UTF8ToString(json_meta), rawBytes, fpBytes);
+        } catch (e) {
+            if (Module.serialBridge && Module.serialBridge.onLog) {
+                Module.serialBridge.onLog('bridge', 'Error in js_emit_dive: ' + (e ? (e.message || e) : 'unknown'));
+            }
+        }
     }
 });
 

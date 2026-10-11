@@ -70,7 +70,7 @@ emcc "${REPO_ROOT}/wasm/src/divecomputer_bridge.c" \
     -sMODULARIZE=1 \
     -sEXPORT_NAME="createDiveComputerModule" \
     -sEXPORTED_FUNCTIONS="['_malloc','_free','_dc_bridge_init','_dc_bridge_list_models','_dc_bridge_download']" \
-    -sEXPORTED_RUNTIME_METHODS="['ccall','cwrap','UTF8ToString','stringToUTF8']" \
+    -sEXPORTED_RUNTIME_METHODS="['ccall','cwrap','UTF8ToString','stringToUTF8','HEAPU8']" \
     -sEXPORT_ES6=1 \
     -O3
 
