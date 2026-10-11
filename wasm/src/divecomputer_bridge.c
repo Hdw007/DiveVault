@@ -3,6 +3,9 @@
  *
  * Connects libdivecomputer to browser Web Serial API using Emscripten Asyncify
  * and custom iostream callbacks (dc_custom_open).
+ *
+ * Copyright (C) 2026 Henry Winkler
+ * Licensed under the GNU General Public License v3.0 (GPL-3.0).
  */
 
 #include <stdio.h>

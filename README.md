@@ -108,3 +108,12 @@ The companion importer handles device reads and upload requests. The web app als
 ## Developer Docs
 
 Development setup, backend and frontend commands, testing, migrations, architecture notes, and release details live in [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md).
+
+## License & Copyright
+
+DiveVault is free software licensed under the [GNU General Public License v3.0](./LICENSE).
+
+- **Original DiveVault Project**: Copyright &copy; jLemmings and contributors.
+- **Go Backend Migration, WebSerial & WebAssembly Direct Import Integration**: Copyright &copy; 2026 Henry Winkler.
+- **Dive Computer Driver Engine**: Powered by [libdivecomputer](https://libdivecomputer.org/), licensed under [LGPL-2.1](./THIRD_PARTY_LICENSES.md). See [THIRD_PARTY_LICENSES.md](./THIRD_PARTY_LICENSES.md) for third-party notices, source availability, and rebuild instructions.
+

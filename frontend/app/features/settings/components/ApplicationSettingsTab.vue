@@ -241,6 +241,13 @@ export default {
           <p class="font-label text-[10px] font-bold uppercase tracking-[0.24em] text-primary">Current Build</p>
           <h4 class="mt-2 font-headline text-3xl font-bold tracking-tight text-on-surface">Application Version</h4>
           <p class="mt-3 text-sm leading-7 text-secondary">This version comes from the frontend package used for the current build.</p>
+          <p class="mt-2 text-xs leading-5 text-secondary/70">
+            &copy; 2026 DiveVault contributors &amp; Henry Winkler. Licensed under GPL-3.0. Dive computer drivers powered by
+            <a href="https://libdivecomputer.org/" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline"
+              >libdivecomputer</a
+            >
+            (LGPL-2.1).
+          </p>
         </div>
         <div class="settings-chip is-accent">v{{ appVersion }}</div>
       </div>

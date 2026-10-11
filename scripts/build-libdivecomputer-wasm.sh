@@ -2,6 +2,7 @@
 set -euo pipefail
 
 # Build script for compiling libdivecomputer to WebAssembly using Emscripten.
+# Copyright (C) 2026 Henry Winkler
 # Outputs: frontend/public/wasm/libdivecomputer.wasm and frontend/public/wasm/libdivecomputer.js
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

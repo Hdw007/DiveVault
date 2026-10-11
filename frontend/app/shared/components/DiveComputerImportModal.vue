@@ -663,6 +663,15 @@ export default {
             <span class="break-all whitespace-pre-wrap">{{ log.message }}</span>
           </div>
         </div>
+
+        <!-- Driver Attribution -->
+        <p class="mt-4 text-center text-[11px] text-secondary/60">
+          Hardware drivers powered by
+          <a href="https://libdivecomputer.org/" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline font-medium">
+            libdivecomputer
+          </a>
+          (LGPL-2.1)
+        </p>
       </div>
     </div>
   </div>
