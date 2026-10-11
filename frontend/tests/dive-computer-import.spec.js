@@ -1,6 +1,75 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { expect, test } from "@playwright/test";
 
 import { gotoAndWait, installAppMocks } from "./helpers/app-fixtures.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+function prepareAladinWireBytes(dumpBuffer) {
+  let sum = 0;
+  for (let i = 0; i < dumpBuffer.length; i++) {
+    sum = (sum + dumpBuffer[i]) & 0xffff;
+  }
+  function reverseByte(b) {
+    let r = 0;
+    for (let i = 0; i < 8; i++) {
+      r = (r << 1) | ((b >> i) & 1);
+    }
+    return r;
+  }
+  const unreversed = new Uint8Array(dumpBuffer.length + 2);
+  unreversed.set(dumpBuffer, 0);
+  unreversed[dumpBuffer.length] = sum & 0xff;
+  unreversed[dumpBuffer.length + 1] = (sum >> 8) & 0xff;
+
+  const wire = new Uint8Array(unreversed.length);
+  for (let i = 0; i < unreversed.length; i++) {
+    wire[i] = reverseByte(unreversed[i]);
+  }
+  return Array.from(wire);
+}
+
+function setupRealAladinWebSerial(page) {
+  const dumpPath = path.join(__dirname, "fixtures/dumps/aladin-air.bin");
+  const dumpBuffer = fs.readFileSync(dumpPath);
+  const wireBytes = prepareAladinWireBytes(dumpBuffer);
+
+  return page.addInitScript((rawWireArray) => {
+    const mockPort = {
+      open: async () => {
+        mockPort.readable = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array(rawWireArray));
+          },
+          cancel() {}
+        });
+      },
+      close: async () => {},
+      setSignals: async () => {},
+      readable: null,
+      writable: {
+        getWriter: () => ({
+          write: async () => {},
+          releaseLock: () => {}
+        })
+      },
+      getInfo: () => ({ usbVendorId: 0x303a, usbProductId: 0x1001 })
+    };
+
+    const mockSerial = {
+      requestPort: async () => mockPort,
+      getPorts: async () => [mockPort]
+    };
+
+    Object.defineProperty(Navigator.prototype, "serial", {
+      get: () => mockSerial,
+      configurable: true
+    });
+  }, wireBytes);
+}
 
 function setupMockWebSerial(page, mockDownloadResult = null) {
   return page.addInitScript((mockResult) => {
@@ -230,6 +299,44 @@ test("allows selecting specific dives via checkboxes before importing", async ({
   await expect(page.getByRole("heading", { name: "Import Complete!" })).toBeVisible();
   await expect(page.locator("text=1 new dive imported into the review queue.")).toBeVisible();
 
+  await page.getByRole("button", { name: "Done" }).click();
+  await expect(page.getByRole("heading", { name: "Connect Dive Computer" })).not.toBeVisible();
+});
+
+test("decodes and imports real Aladin Air 2KB dump via WebAssembly and Web Serial", async ({ page }) => {
+  await setupRealAladinWebSerial(page);
+  await installAppMocks(page);
+  await gotoAndWait(page, "/#imports");
+
+  await page.getByRole("button", { name: "Import from Dive Computer" }).first().click();
+  await expect(page.getByRole("heading", { name: "Connect Dive Computer" })).toBeVisible();
+
+  // Select Uwatec Aladin Air
+  const vendorSelect = page.locator("select").first();
+  await vendorSelect.selectOption("Uwatec");
+  const productSelect = page.locator("select").nth(1);
+  await productSelect.selectOption("Aladin Air Twin");
+
+  // Click Connect & Download Dives
+  await page.getByRole("button", { name: "Connect & Download Dives" }).click();
+
+  // Verify transition to preview stage with all 37 decoded dives
+  await expect(page.getByRole("heading", { name: "Discovered Dives" })).toBeVisible({ timeout: 15000 });
+  await expect(page.locator("text=Found 37 dives ready to import")).toBeVisible();
+  await expect(page.locator("text=37 of 37 Selected")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Import 37 Dives" })).toBeVisible();
+
+  // Verify real dives decoded by libdivecomputer Wasm from the binary dump
+  await expect(page.locator("td:text('9.5 m')").first()).toBeVisible();
+
+  // Click Import 37 Dives
+  await page.getByRole("button", { name: "Import 37 Dives" }).click();
+
+  // Verify completion screen
+  await expect(page.getByRole("heading", { name: "Import Complete!" })).toBeVisible();
+  await expect(page.locator("text=37 new dives imported into the review queue.")).toBeVisible();
+
+  // Click Done
   await page.getByRole("button", { name: "Done" }).click();
   await expect(page.getByRole("heading", { name: "Connect Dive Computer" })).not.toBeVisible();
 });

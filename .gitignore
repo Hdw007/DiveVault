@@ -31,3 +31,5 @@ frontend/playwright-report
 frontend/test-results
 *.code-workspace
 .build-wasm/
+dump.bin
+
