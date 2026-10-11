@@ -40,20 +40,28 @@ if grep -q "!defined(__ANDROID__)" "${LDC_SRC}/src/serial_posix.c" && ! grep -q 
     sed -i 's/!defined(__ANDROID__)/!defined(__ANDROID__) \&\& !defined(__EMSCRIPTEN__)/g' "${LDC_SRC}/src/serial_posix.c"
 fi
 
-# 3. Configure and compile libdivecomputer.a
-if [ ! -f "${INSTALL_DIR}/lib/libdivecomputer.a" ]; then
+# 3. Patch descriptor.c to name model 0x1C "Aladin Air" instead of "Aladin Air Twin"
+if grep -q '"Aladin Air Twin"' "${LDC_SRC}/src/descriptor.c"; then
+    echo "Patching descriptor.c to rename 'Aladin Air Twin' to 'Aladin Air'..."
+    sed -i 's/"Aladin Air Twin"/"Aladin Air"/g' "${LDC_SRC}/src/descriptor.c"
+fi
+
+# 4. Configure and compile libdivecomputer.a
+if [ ! -f "${INSTALL_DIR}/lib/libdivecomputer.a" ] || [ "${LDC_SRC}/src/descriptor.c" -nt "${INSTALL_DIR}/lib/libdivecomputer.a" ]; then
     echo "Configuring and compiling libdivecomputer static library..."
     cd "${LDC_SRC}"
-    emconfigure ./configure \
-        --prefix="${INSTALL_DIR}" \
-        --without-libusb \
-        --without-hidapi \
-        --without-bluez \
-        --enable-examples=no \
-        --enable-doc=no \
-        --disable-shared \
-        --enable-static \
-        CFLAGS="-O3"
+    if [ ! -f Makefile ]; then
+        emconfigure ./configure \
+            --prefix="${INSTALL_DIR}" \
+            --without-libusb \
+            --without-hidapi \
+            --without-bluez \
+            --enable-examples=no \
+            --enable-doc=no \
+            --disable-shared \
+            --enable-static \
+            CFLAGS="-O3"
+    fi
 
     emmake make -j"$(nproc 2>/dev/null || echo 4)"
     emmake make install

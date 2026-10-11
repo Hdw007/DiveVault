@@ -36,7 +36,7 @@ export default {
       step: "select", // "select" | "connecting" | "transferring" | "preview" | "completed"
       supportedModels: [],
       selectedVendor: "Uwatec",
-      selectedProduct: "Aladin Air Twin",
+      selectedProduct: "Aladin Air",
       searchQuery: "",
       progressStage: "",
       progressCurrent: 0,
@@ -134,7 +134,9 @@ export default {
         const savedVendor = window.localStorage.getItem(STORAGE_KEY_VENDOR);
         const savedProduct = window.localStorage.getItem(STORAGE_KEY_PRODUCT);
         if (savedVendor) this.selectedVendor = savedVendor;
-        if (savedProduct) this.selectedProduct = savedProduct;
+        if (savedProduct) {
+          this.selectedProduct = savedProduct === "Aladin Air Twin" ? "Aladin Air" : savedProduct;
+        }
       }
 
       // Load models from Wasm

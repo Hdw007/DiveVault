@@ -176,8 +176,8 @@ test("lists supported dive computer models loaded from libdivecomputer Wasm", as
 
   // Switch back to Uwatec
   await vendorSelect.selectOption("Uwatec");
-  await expect(productSelect).toContainText("Aladin Air Twin");
-  await productSelect.selectOption("Aladin Air Twin");
+  await expect(productSelect).toContainText("Aladin Air");
+  await productSelect.selectOption("Aladin Air");
 
   await expect(page.getByRole("button", { name: "Connect & Download Dives" })).toBeEnabled();
 
@@ -315,7 +315,7 @@ test("decodes and imports real Aladin Air 2KB dump via WebAssembly and Web Seria
   const vendorSelect = page.locator("select").first();
   await vendorSelect.selectOption("Uwatec");
   const productSelect = page.locator("select").nth(1);
-  await productSelect.selectOption("Aladin Air Twin");
+  await productSelect.selectOption("Aladin Air");
 
   // Click Connect & Download Dives
   await page.getByRole("button", { name: "Connect & Download Dives" }).click();
