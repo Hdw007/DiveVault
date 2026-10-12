@@ -4,6 +4,7 @@ import { useRoute, useRouter } from "#app";
 import DiveDetailView from "~/features/logbook/DiveDetail.vue";
 import { useDivesStore } from "~/shared/composables/use-dives-store.js";
 import { useProfileStore } from "~/shared/composables/use-profile-store.js";
+import { useEquipmentStore } from "~/shared/composables/use-equipment-store.js";
 import { useAppNavigation } from "~/shared/composables/use-app-navigation.js";
 import { useAppShell } from "~/shared/composables/use-app-shell.js";
 import { singleRouteParam } from "~/routing/routes.js";
@@ -12,6 +13,7 @@ const route = useRoute();
 const router = useRouter();
 const divesStore = useDivesStore();
 const profileStore = useProfileStore();
+const equipmentStore = useEquipmentStore();
 const { closeDiveDetail, openDiveEditor } = useAppNavigation();
 const shell = useAppShell();
 
@@ -50,6 +52,7 @@ watch([() => divesStore.isLoading, () => divesStore.dives], ([loading, dives]) =
     :dive="divesStore.selectedDive"
     :all-dives="divesStore.dives"
     :dive-sites="profileStore.diveSites"
+    :equipment="equipmentStore.equipment"
     :deleting-dive-id="divesStore.deletingDiveId"
     :close-detail="closeDiveDetail"
     :open-dive-editor="openDiveEditor"

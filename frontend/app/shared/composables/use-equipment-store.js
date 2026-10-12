@@ -5,6 +5,7 @@ import {
   markEquipmentServiced as markEquipmentServicedRequest,
   saveEquipment as saveEquipmentRequest
 } from "~/shared/api/equipment.js";
+import { fetchDives } from "~/shared/composables/use-dives-store.js";
 import { useAuth } from "~/shared/composables/auth.js";
 
 const state = reactive({
@@ -56,6 +57,7 @@ async function saveEquipment(items, apiClient = null) {
     const response = await saveEquipmentRequest(client, items);
     const payload = await requireJson(response);
     state.equipment = Array.isArray(payload?.equipment) ? payload.equipment : [];
+    await fetchDives(client, { silent: true }).catch(() => {});
     state.statusMessage = "Equipment inventory saved.";
     return state.equipment;
   } catch (err) {

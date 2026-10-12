@@ -631,6 +631,21 @@ func (db *DB) PublicProfile(ctx context.Context, slug string) (map[string]any, [
 }
 
 func replaceProfileCollection(ctx context.Context, tx pgx.Tx, table string, idColumn string, userID string, entries []any, columns []string) error {
+	oldNames := map[string]string{}
+	if table == "user_profile_dive_sites" || table == "user_profile_buddies" || table == "user_profile_guides" {
+		rows, err := tx.Query(ctx, fmt.Sprintf("SELECT %s, name FROM %s WHERE user_id=$1", idColumn, table), cleanText(userID))
+		if err == nil {
+			for rows.Next() {
+				var id, name string
+				if err := rows.Scan(&id, &name); err == nil {
+					oldNames[id] = name
+				}
+			}
+			rows.Close()
+		}
+	}
+
+	renames := map[string]string{}
 	seenIDs := make([]string, 0, len(entries))
 	for index, entry := range entries {
 		item := mapValue(entry)
@@ -639,6 +654,12 @@ func replaceProfileCollection(ctx context.Context, tx pgx.Tx, table string, idCo
 			id = fmt.Sprintf("%s_%d_%d", idColumn, time.Now().UnixNano(), index)
 		}
 		seenIDs = append(seenIDs, id)
+
+		newName := stringValue(item["name"])
+		if oldName, ok := oldNames[id]; ok && oldName != "" && newName != "" && oldName != newName {
+			renames[oldName] = newName
+		}
+
 		names := []string{"user_id", idColumn}
 		args := []any{cleanText(userID), id}
 		placeholders := []string{"$1", "$2"}
@@ -670,8 +691,206 @@ func replaceProfileCollection(ctx context.Context, tx pgx.Tx, table string, idCo
 		_, err := tx.Exec(ctx, "DELETE FROM "+table+" WHERE user_id=$1", cleanText(userID))
 		return err
 	}
-	_, err := tx.Exec(ctx, "DELETE FROM "+table+" WHERE user_id=$1 AND NOT ("+idColumn+" = ANY($2))", cleanText(userID), seenIDs)
+	if _, err := tx.Exec(ctx, "DELETE FROM "+table+" WHERE user_id=$1 AND NOT ("+idColumn+" = ANY($2))", cleanText(userID), seenIDs); err != nil {
+		return err
+	}
+
+	for oldName, newName := range renames {
+		switch table {
+		case "user_profile_dive_sites":
+			if err := cascadeSiteRename(ctx, tx, userID, oldName, newName); err != nil {
+				return err
+			}
+		case "user_profile_buddies":
+			if err := cascadeBuddyRename(ctx, tx, userID, oldName, newName); err != nil {
+				return err
+			}
+		case "user_profile_guides":
+			if err := cascadeGuideRename(ctx, tx, userID, oldName, newName); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func cascadeSiteRename(ctx context.Context, tx pgx.Tx, userID string, oldName string, newName string) error {
+	_, err := tx.Exec(ctx, `
+		UPDATE dives
+		SET fields_json = (
+			CASE
+				WHEN fields_json ? 'site' AND fields_json->>'site' = $3 THEN
+					jsonb_set(
+						jsonb_set(
+							CASE WHEN NOT (fields_json ? 'logbook') THEN jsonb_set(fields_json, '{logbook}', '{}'::jsonb, true) ELSE fields_json END,
+							'{logbook,site}',
+							to_jsonb($1::text),
+							true
+						),
+						'{site}',
+						to_jsonb($1::text),
+						false
+					)
+				ELSE
+					jsonb_set(
+						CASE WHEN NOT (fields_json ? 'logbook') THEN jsonb_set(fields_json, '{logbook}', '{}'::jsonb, true) ELSE fields_json END,
+						'{logbook,site}',
+						to_jsonb($1::text),
+						true
+					)
+			END
+		)
+		WHERE user_id = $2
+		  AND (fields_json->'logbook'->>'site' = $3 OR fields_json->>'site' = $3)
+	`, cleanText(newName), cleanText(userID), cleanText(oldName))
 	return err
+}
+
+func cascadeBuddyRename(ctx context.Context, tx pgx.Tx, userID string, oldName string, newName string) error {
+	rows, err := tx.Query(ctx, `
+		SELECT id, fields_json
+		FROM dives
+		WHERE user_id = $1
+		  AND (fields_json->'logbook'->>'buddy' LIKE '%' || $2 || '%' OR fields_json->>'buddy' LIKE '%' || $2 || '%')
+	`, cleanText(userID), cleanText(oldName))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type updateEntry struct {
+		id         int64
+		fieldsJSON []byte
+	}
+	var updates []updateEntry
+
+	for rows.Next() {
+		var id int64
+		var fieldsJSON []byte
+		if err := rows.Scan(&id, &fieldsJSON); err != nil {
+			return err
+		}
+		var fields map[string]any
+		if err := json.Unmarshal(fieldsJSON, &fields); err != nil {
+			continue
+		}
+		modified := false
+		if logbook, ok := fields["logbook"].(map[string]any); ok && logbook != nil {
+			if buddyStr, ok := logbook["buddy"].(string); ok {
+				if newBuddyStr, changed := replaceTokenInList(buddyStr, oldName, newName); changed {
+					logbook["buddy"] = newBuddyStr
+					fields["logbook"] = logbook
+					modified = true
+				}
+			}
+		}
+		if buddyStr, ok := fields["buddy"].(string); ok {
+			if newBuddyStr, changed := replaceTokenInList(buddyStr, oldName, newName); changed {
+				fields["buddy"] = newBuddyStr
+				modified = true
+			}
+		}
+		if modified {
+			updatedBytes, _ := json.Marshal(fields)
+			updates = append(updates, updateEntry{id: id, fieldsJSON: updatedBytes})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, entry := range updates {
+		if _, err := tx.Exec(ctx, "UPDATE dives SET fields_json=$1 WHERE id=$2", entry.fieldsJSON, entry.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func cascadeGuideRename(ctx context.Context, tx pgx.Tx, userID string, oldName string, newName string) error {
+	rows, err := tx.Query(ctx, `
+		SELECT id, fields_json
+		FROM dives
+		WHERE user_id = $1
+		  AND (fields_json->'logbook'->>'guide' LIKE '%' || $2 || '%' OR fields_json->>'guide' LIKE '%' || $2 || '%')
+	`, cleanText(userID), cleanText(oldName))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type updateEntry struct {
+		id         int64
+		fieldsJSON []byte
+	}
+	var updates []updateEntry
+
+	for rows.Next() {
+		var id int64
+		var fieldsJSON []byte
+		if err := rows.Scan(&id, &fieldsJSON); err != nil {
+			return err
+		}
+		var fields map[string]any
+		if err := json.Unmarshal(fieldsJSON, &fields); err != nil {
+			continue
+		}
+		modified := false
+		if logbook, ok := fields["logbook"].(map[string]any); ok && logbook != nil {
+			if guideStr, ok := logbook["guide"].(string); ok {
+				if newGuideStr, changed := replaceTokenInList(guideStr, oldName, newName); changed {
+					logbook["guide"] = newGuideStr
+					fields["logbook"] = logbook
+					modified = true
+				}
+			}
+		}
+		if guideStr, ok := fields["guide"].(string); ok {
+			if newGuideStr, changed := replaceTokenInList(guideStr, oldName, newName); changed {
+				fields["guide"] = newGuideStr
+				modified = true
+			}
+		}
+		if modified {
+			updatedBytes, _ := json.Marshal(fields)
+			updates = append(updates, updateEntry{id: id, fieldsJSON: updatedBytes})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, entry := range updates {
+		if _, err := tx.Exec(ctx, "UPDATE dives SET fields_json=$1 WHERE id=$2", entry.fieldsJSON, entry.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func replaceTokenInList(str string, oldName string, newName string) (string, bool) {
+	trimmedOld := strings.TrimSpace(oldName)
+	if strings.TrimSpace(str) == "" || trimmedOld == "" {
+		return str, false
+	}
+	if strings.TrimSpace(str) == trimmedOld {
+		return newName, true
+	}
+	parts := strings.Split(str, ",")
+	changed := false
+	for i, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == trimmedOld {
+			startIdx := strings.Index(part, trimmed)
+			prefix := part[:startIdx]
+			suffix := part[startIdx+len(trimmed):]
+			parts[i] = prefix + newName + suffix
+			changed = true
+		}
+	}
+	if changed {
+		return strings.Join(parts, ","), true
+	}
+	return str, false
 }
 
 func (db *DB) listCollection(ctx context.Context, table string, idColumn string, userID string) ([]any, error) {
@@ -780,14 +999,14 @@ func equipmentServiceStatusForDive(item map[string]any, diveStartedAt any) map[s
 
 	if diveDate == nil {
 		return map[string]any{
-			"service_status":  "unknown",
+			"service_status":   "unknown",
 			"service_due_date": "",
 			"service_message":  "Dive date is unavailable.",
 		}
 	}
 	if lastServiceDate == nil || interval <= 0 {
 		return map[string]any{
-			"service_status":  "unknown",
+			"service_status":   "unknown",
 			"service_due_date": "",
 			"service_message":  "Service date or interval is missing.",
 		}
@@ -798,14 +1017,14 @@ func equipmentServiceStatusForDive(item map[string]any, diveStartedAt any) map[s
 
 	if lastServiceDate.After(*diveDate) {
 		return map[string]any{
-			"service_status":  "unknown",
+			"service_status":   "unknown",
 			"service_due_date": serviceDueDateStr,
 			"service_message":  "Latest service date is after this dive.",
 		}
 	}
 	if diveDate.After(serviceDueDate) {
 		return map[string]any{
-			"service_status":  "overdue",
+			"service_status":   "overdue",
 			"service_due_date": serviceDueDateStr,
 			"service_message":  "Service was overdue for this dive.",
 		}
@@ -816,7 +1035,7 @@ func equipmentServiceStatusForDive(item map[string]any, diveStartedAt any) map[s
 		status = "due_soon"
 	}
 	return map[string]any{
-		"service_status":  status,
+		"service_status":   status,
 		"service_due_date": serviceDueDateStr,
 		"service_message":  "",
 	}
@@ -873,7 +1092,7 @@ func equipmentServiceSummary(item map[string]any, committedDiveCount int, servic
 	}
 
 	return map[string]any{
-		"dives_since_service":             divesSinceService,
+		"dives_since_service":            divesSinceService,
 		"dives_remaining_before_service": divesRemaining,
 		"service_due":                    diveDue || dateDue,
 		"service_due_reason":             serviceDueReason,
@@ -922,14 +1141,39 @@ func (db *DB) SaveEquipment(ctx context.Context, userID string, entries []any) (
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
+
+	oldEquipmentNames := map[string]string{}
+	eqRows, err := tx.Query(ctx, "SELECT equipment_id, name FROM user_equipment WHERE user_id=$1", cleanText(userID))
+	if err == nil {
+		for eqRows.Next() {
+			var eqID, eqName string
+			if err := eqRows.Scan(&eqID, &eqName); err == nil {
+				oldEquipmentNames[eqID] = eqName
+			}
+		}
+		eqRows.Close()
+	}
+
 	if _, err := tx.Exec(ctx, "DELETE FROM user_equipment WHERE user_id=$1", cleanText(userID)); err != nil {
 		return nil, err
 	}
+
+	type eqRename struct {
+		id      string
+		oldName string
+		newName string
+	}
+	var renames []eqRename
+
 	for _, entry := range entries {
 		item := mapValue(entry)
 		id := stringValue(valueOr(item["id"], item["equipment_id"]))
 		if id == "" {
 			id = "equipment_" + time.Now().UTC().Format("20060102150405.000000000")
+		}
+		newName := stringValue(item["name"])
+		if oldName, ok := oldEquipmentNames[id]; ok && oldName != "" && newName != "" && oldName != newName {
+			renames = append(renames, eqRename{id: id, oldName: oldName, newName: newName})
 		}
 		nextServiceDue := stringValue(item["next_service_due"])
 		lastServiceDate := stringValue(item["last_service_date"])
@@ -947,10 +1191,84 @@ func (db *DB) SaveEquipment(ctx context.Context, userID string, entries []any) (
 			return nil, err
 		}
 	}
+
+	for _, r := range renames {
+		if err := cascadeEquipmentRename(ctx, tx, userID, r.id, r.oldName, r.newName); err != nil {
+			return nil, err
+		}
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	return db.ListEquipment(ctx, userID)
+}
+
+func cascadeEquipmentRename(ctx context.Context, tx pgx.Tx, userID string, equipmentID string, oldName string, newName string) error {
+	rows, err := tx.Query(ctx, `
+		SELECT id, fields_json
+		FROM dives
+		WHERE user_id = $1
+		  AND (fields_json->'logbook'->'equipment_snapshot'::text LIKE '%' || $2 || '%')
+	`, cleanText(userID), cleanText(equipmentID))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type updateEntry struct {
+		id         int64
+		fieldsJSON []byte
+	}
+	var updates []updateEntry
+
+	for rows.Next() {
+		var id int64
+		var fieldsJSON []byte
+		if err := rows.Scan(&id, &fieldsJSON); err != nil {
+			return err
+		}
+		var fields map[string]any
+		if err := json.Unmarshal(fieldsJSON, &fields); err != nil {
+			continue
+		}
+		logbook, _ := fields["logbook"].(map[string]any)
+		if logbook == nil {
+			continue
+		}
+		snapshot, ok := logbook["equipment_snapshot"].([]any)
+		if !ok || len(snapshot) == 0 {
+			continue
+		}
+		modified := false
+		for i, itemRaw := range snapshot {
+			itemMap, ok := itemRaw.(map[string]any)
+			if !ok {
+				continue
+			}
+			itemID := stringValue(valueOr(itemMap["id"], itemMap["equipment_id"]))
+			if itemID == equipmentID {
+				itemMap["name"] = newName
+				snapshot[i] = itemMap
+				modified = true
+			}
+		}
+		if modified {
+			logbook["equipment_snapshot"] = snapshot
+			fields["logbook"] = logbook
+			updatedBytes, _ := json.Marshal(fields)
+			updates = append(updates, updateEntry{id: id, fieldsJSON: updatedBytes})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, entry := range updates {
+		if _, err := tx.Exec(ctx, "UPDATE dives SET fields_json=$1 WHERE id=$2", entry.fieldsJSON, entry.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (db *DB) MarkEquipmentServiced(ctx context.Context, userID string, equipmentID string) (map[string]any, error) {

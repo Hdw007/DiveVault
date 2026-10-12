@@ -43,7 +43,7 @@ const PROFILE_CHART_PADDING = 10;
 
 export default {
   name: "DiveDetailView",
-  props: ["dive", "allDives", "diveSites", "deletingDiveId", "closeDetail", "openDiveEditor", "deleteDive", "publicView"],
+  props: ["dive", "allDives", "diveSites", "equipment", "deletingDiveId", "closeDetail", "openDiveEditor", "deleteDive", "publicView"],
   data() {
     return {
       profileHover: null
@@ -105,15 +105,36 @@ export default {
       return detailEquipmentTags(this.dive);
     },
     equipmentItems() {
-      const snapshot = importDraftSeed(this.dive)?.equipment_snapshot;
+      const draft = importDraftSeed(this.dive);
+      const snapshot = draft?.equipment_snapshot;
+      const idMap = Array.isArray(this.equipment) ? new Map(this.equipment.map((e) => [String(e.id || e.equipment_id), e])) : null;
+
       if (Array.isArray(snapshot) && snapshot.length) {
         return snapshot
+          .map((item) => {
+            const itemID = String(item?.id || item?.equipment_id || "");
+            const latest = idMap?.get(itemID);
+            return {
+              label: latest?.name || item?.name || item?.category || "Equipment",
+              category: latest?.category || item?.category || "Gear",
+              icon: this.equipmentIcon(latest || item)
+            };
+          })
+          .filter((item) => item.label);
+      }
+      if (Array.isArray(draft?.equipment_ids) && draft.equipment_ids.length && idMap) {
+        const resolved = draft.equipment_ids
+          .map((id) => idMap.get(String(id)))
+          .filter(Boolean)
           .map((item) => ({
-            label: item?.name || item?.category || "Equipment",
-            category: item?.category || "Gear",
+            label: item.name || item.category || "Equipment",
+            category: item.category || "Gear",
             icon: this.equipmentIcon(item)
           }))
           .filter((item) => item.label);
+        if (resolved.length) {
+          return resolved;
+        }
       }
       return this.equipmentTags.map((tag) => ({ label: tag, category: "Gear", icon: "scuba_diving" }));
     },

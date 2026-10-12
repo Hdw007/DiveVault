@@ -19,6 +19,7 @@ const activeSection = computed(() => shell.normalizeSettingsSection(rawSection.v
 
 function handleProfileUpdated(payload) {
   profileStore.hydrateProfileState(payload);
+  refreshDives();
 }
 
 function refreshDives() {

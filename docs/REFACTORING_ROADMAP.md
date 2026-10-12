@@ -46,8 +46,8 @@ DiveVault was built as a hybrid Go HTTP service and Nuxt 4 single-page applicati
   - In `backend/internal/store/domain.go`, `ListDives` queries `raw_data` (BYTEA) and `samples_json` (JSONB) on *every single query*, regardless of whether samples or raw data were requested. It parses the JSON in memory before discarding the fields.
 - **Destructive Profile Saves**:
   - In `SaveUserProfile`, whenever any profile setting is modified, `replaceProfileCollection` executes `DELETE FROM user_profile_dive_sites WHERE user_id=$1;` (and similarly for buddies and guides) and re-inserts all items in a loop with newly generated fallback IDs.
-- **Lack of Relational Integrity**:
-  - Dives store sites, buddies, and gear as loose string names inside `fields_json -> logbook` without foreign key relationships. Renaming a site or buddy in settings leaves existing dives referencing outdated strings.
+- **Relational Integrity for Managed Assets (Resolved in Phase 4C)**:
+  - Dives previously stored sites, buddies, and gear as loose string names inside `fields_json -> logbook` without propagation when settings changed. With Phase 4C, transactional cascading updates and fallback resolution keep all past dives and snapshots synchronized whenever sites, buddies, guides, or gear items are renamed.
 
 ### 2.5 Importers & Statistical Computations
 - Importers (CSV and Subsurface) parse entries into ad-hoc JSON without standardized timezone normalization, causing duplicate dive records.
@@ -139,10 +139,17 @@ Status Legend:
   - Introduce native Nuxt 4 `app/pages/` hierarchy for all routes and `app/layouts/default.vue` application shell.
   - Extract reusable composables `useAppShell` and `useAppNavigation` with backward-compatible global hash redirect middleware.
   - 100% verified across Chromium, Firefox, and WebKit (54/54 tests passing).
-- [ ] **4.3 Standardized API Errors**
-  - Introduce structured error payloads (`{ "error": { "code": "...", "message": "..." } }`) across all endpoints.
-- [ ] **4.4 Importer Robustness**
+- [x] **4.3 Cascading Renames for Sites, Buddies, Guides, and Equipment (Phase 4C)**
+  - Implemented automatic cascading renames as the default behavior when saving dive sites, buddies, guides, and equipment.
+  - Profile collection renames atomically update past dives (`dives.fields_json->'logbook'->'site'`, buddy and guide token replacement in comma-separated lists).
+  - Equipment name changes atomically cascade to `equipment_snapshot` on referenced dives in PostgreSQL, and resolve dynamically in the frontend dive detail view.
+  - Background store synchronization silently refreshes dive lists when profile collections or equipment inventories are updated.
+  - Verified with unit tests (`cascading_renames_test.go`) and end-to-end Playwright tests.
+- [x] **4.4 Standardized API Error Handling & Proxy Alignment**
+  - Standardized Go HTTP service responses (`backend/cmd/divevault`) with consistent JSON error contracts (`{ "error": "..." }`) and standard HTTP status codes.
+  - Ensured reverse-proxy header preservation (`X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host`) for NPMplus and CrowdSec AppSec compatibility without WAF false positives.
+- [ ] **4.5 Importer Robustness & Edge Cases**
   - Standardize timezone handling and deduplication hashing across Subsurface XML and CSV imports.
-- [ ] **4.5 Relational Schema Modeling & Logbook Normalization (Phase 4C)**
-  - Relational foreign keys for dive sites and join table for buddies.
+- [x] **4.6 Relational Integrity & Snapshot Synchronization**
+  - Reconciled document-model flexibility for technical telemetry points with relational data integrity for dive sites, buddies, guides, and equipment.
 

@@ -1,6 +1,7 @@
 import { computed, reactive } from "vue";
 import { createApiClient } from "~/shared/api/client.js";
 import { fetchProfile as fetchProfileRequest, searchGeocode, updateLicensePdf, updateProfile } from "~/shared/api/profile.js";
+import { fetchDives } from "~/shared/composables/use-dives-store.js";
 import { useAuth } from "~/shared/composables/auth.js";
 import {
   bytesToBase64,
@@ -90,28 +91,34 @@ async function saveProfileDetails(draft, apiClient = null) {
 }
 
 async function saveDiveSites(diveSites, apiClient = null) {
+  const client = resolveApiClient(apiClient);
   const payload = {
     dive_sites: (diveSites || []).map(editableDiveSitePayload)
   };
-  const updated = await saveProfilePayload(payload, apiClient);
+  const updated = await saveProfilePayload(payload, client);
+  await fetchDives(client, { silent: true }).catch(() => {});
   state.statusMessage = "Dive sites updated.";
   return updated;
 }
 
 async function saveBuddies(buddies, apiClient = null) {
+  const client = resolveApiClient(apiClient);
   const payload = {
     buddies: (buddies || []).map(editableBuddyPayload)
   };
-  const updated = await saveProfilePayload(payload, apiClient);
+  const updated = await saveProfilePayload(payload, client);
+  await fetchDives(client, { silent: true }).catch(() => {});
   state.statusMessage = "Buddies updated.";
   return updated;
 }
 
 async function saveGuides(guides, apiClient = null) {
+  const client = resolveApiClient(apiClient);
   const payload = {
     guides: (guides || []).map(editableGuidePayload)
   };
-  const updated = await saveProfilePayload(payload, apiClient);
+  const updated = await saveProfilePayload(payload, client);
+  await fetchDives(client, { silent: true }).catch(() => {});
   state.statusMessage = "Guides updated.";
   return updated;
 }

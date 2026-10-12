@@ -682,7 +682,24 @@ async function installAppMocks(page, options = {}) {
 
     if (pathname === "/api/equipment" && request.method() === "PUT") {
       const payload = request.postDataJSON ? request.postDataJSON() : JSON.parse(request.postData() || "{}");
-      data.equipment = Array.isArray(payload.equipment) ? clone(payload.equipment) : [];
+      const oldEquipmentMap = new Map((data.equipment || []).map((e) => [String(e.id || e.equipment_id), e.name]));
+      const newEquipment = Array.isArray(payload.equipment) ? clone(payload.equipment) : [];
+      newEquipment.forEach((item) => {
+        const id = String(item.id || item.equipment_id);
+        const oldName = oldEquipmentMap.get(id);
+        if (oldName && item.name && oldName !== item.name) {
+          data.dives.forEach((dive) => {
+            if (Array.isArray(dive.fields?.logbook?.equipment_snapshot)) {
+              dive.fields.logbook.equipment_snapshot.forEach((snap) => {
+                if (String(snap.id || snap.equipment_id) === id) {
+                  snap.name = item.name;
+                }
+              });
+            }
+          });
+        }
+      });
+      data.equipment = newEquipment;
       refreshEquipmentService(data);
       await fulfillJson(route, { equipment: clone(data.equipment) });
       return;
@@ -707,6 +724,49 @@ async function installAppMocks(page, options = {}) {
 
     if (pathname === "/api/profile" && request.method() === "PUT") {
       const payload = request.postDataJSON ? request.postDataJSON() : JSON.parse(request.postData() || "{}");
+      if (Array.isArray(payload.dive_sites)) {
+        const oldSitesMap = new Map((data.profile.dive_sites || []).map((s) => [String(s.id), s.name]));
+        payload.dive_sites.forEach((site) => {
+          const oldName = oldSitesMap.get(String(site.id));
+          if (oldName && site.name && oldName !== site.name) {
+            data.dives.forEach((dive) => {
+              if (dive.fields?.logbook?.site === oldName) {
+                dive.fields.logbook.site = site.name;
+              }
+            });
+          }
+        });
+      }
+      if (Array.isArray(payload.buddies)) {
+        const oldBuddiesMap = new Map((data.profile.buddies || []).map((b) => [String(b.id), b.name]));
+        payload.buddies.forEach((buddy) => {
+          const oldName = oldBuddiesMap.get(String(buddy.id));
+          if (oldName && buddy.name && oldName !== buddy.name) {
+            data.dives.forEach((dive) => {
+              if (dive.fields?.logbook?.buddy) {
+                const parts = dive.fields.logbook.buddy.split(",").map((p) => p.trim());
+                const nextParts = parts.map((p) => (p === oldName ? buddy.name : p));
+                dive.fields.logbook.buddy = nextParts.join(", ");
+              }
+            });
+          }
+        });
+      }
+      if (Array.isArray(payload.guides)) {
+        const oldGuidesMap = new Map((data.profile.guides || []).map((g) => [String(g.id), g.name]));
+        payload.guides.forEach((guide) => {
+          const oldName = oldGuidesMap.get(String(guide.id));
+          if (oldName && guide.name && oldName !== guide.name) {
+            data.dives.forEach((dive) => {
+              if (dive.fields?.logbook?.guide) {
+                const parts = dive.fields.logbook.guide.split(",").map((p) => p.trim());
+                const nextParts = parts.map((p) => (p === oldName ? guide.name : p));
+                dive.fields.logbook.guide = nextParts.join(", ");
+              }
+            });
+          }
+        });
+      }
       data.profile = {
         ...data.profile,
         ...payload,

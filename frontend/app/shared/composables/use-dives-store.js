@@ -145,7 +145,7 @@ function isPendingImportId(diveId, dives = state.dives, drafts = state.importDra
   return dives.some((dive) => String(dive.id) === String(diveId) && !isImportComplete(effectiveImportDraft(dive, drafts[String(dive.id)])));
 }
 
-async function fetchDives(apiClient = null, options = {}) {
+export async function fetchDives(apiClient = null, options = {}) {
   const isSilent = options.silent === true;
   if (!isSilent) {
     state.loading = true;

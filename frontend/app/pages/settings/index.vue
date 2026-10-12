@@ -13,6 +13,7 @@ const shell = useAppShell();
 
 function handleProfileUpdated(payload) {
   profileStore.hydrateProfileState(payload);
+  refreshDives();
 }
 
 function refreshDives() {

@@ -22,7 +22,7 @@ This repository is an actively maintained, modernized fork of DiveVault tailored
 
 - **Pure Go Backend**: The legacy Python backend and transitional rewrite shims have been completely removed. The backend is now a single, performant Go HTTP service located in [`backend/`](./backend).
 - **Nuxt 4 Frontend**: Modernized Single-Page Application using Vue 3 Composition API, Nuxt UI, Tailwind CSS, domain stores (`useDivesStore`, `useProfileStore`), and native file-based page routing in `frontend/app/pages/`.
-- **Direct In-Browser Dive Computer Download (WebSerial + Wasm)**: Connect your dive computer via USB/Serial and download telemetry directly inside your browser (Chrome/Edge) using an embedded WebAssembly build of [`libdivecomputer`](https://libdivecomputer.org/). No separate desktop agents or Python bridge scripts required.
+- **Direct In-Browser Dive Computer Download (WebSerial + Wasm)**: Connect your dive computer via USB/Serial and download telemetry directly inside your browser (Chrome/Edge/Firefox) using an embedded WebAssembly build of [`libdivecomputer`](https://libdivecomputer.org/). No separate desktop agents or Python bridge scripts required.
 - **Optimized Database Layer**: Selective telemetry SQL queries (slashing dive list network payloads by ~90%), server-side PostgreSQL aggregate statistics (`COUNT`, `SUM`, `MAX`, `AVG`), and non-destructive atomic profile updates (`ON CONFLICT ... DO UPDATE`).
 - **Log Import & Migration**: Staged review queue for WebSerial computer downloads, spreadsheet CSV imports, and Subsurface XML/SSRF logs.
 - **Proxy & AppSec Ready**: First-class support for `X-Forwarded-*` headers, secure cookie flags, and clean predictable API contracts suitable for CrowdSec AppSec / WAF inspection.

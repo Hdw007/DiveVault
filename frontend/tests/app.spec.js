@@ -583,3 +583,23 @@ test("loads dive list with lightweight samples and fetches telemetry on detail v
   await expect(page.getByText("24.9 L/min")).toBeVisible();
   expect(detailRequested).toBe(true);
 });
+
+test("cascades dive site renames in settings to past dives", async ({ page }) => {
+  await installAppMocks(page);
+  await gotoAndWait(page, "/#settings/dive-sites");
+
+  await expect(page.getByRole("heading", { name: "Reusable Site Directory" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Blue Hole" })).toBeVisible();
+
+  const blueHoleCard = page.locator("article").filter({ hasText: "Blue Hole" });
+  await blueHoleCard.getByRole("button", { name: "Edit Site" }).click();
+
+  const siteInput = blueHoleCard.getByPlaceholder("North Wall / Training Reef");
+  await siteInput.fill("Emerald Cave");
+  await page.getByRole("button", { name: "Save Dive Site" }).click();
+  await expect(page.getByText("Dive sites updated.")).toBeVisible();
+
+  await page.getByRole("button", { name: "Dive Logs" }).click();
+  await expect(page.getByRole("heading", { name: "Dive Logs", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Emerald Cave" }).first()).toBeVisible();
+});
