@@ -1,25 +1,26 @@
 # Agent Notes
 
 ## Repo Shape
-- Backend is a Go HTTP service in `backend-go/cmd/divevault`; it serves `/api/*`, `/health`, `/config.js`, and built frontend assets from `FRONTEND_DIR`.
-- PostgreSQL schema and migrations live in `backend-go/internal/migrations`; bump `CurrentSchemaVersion` when adding schema migrations.
-- Frontend is a Nuxt 4 app under `frontend/`; entrypoint is `frontend/app/app.vue`, the thin app shell is `frontend/app/components/DiveVaultApp.vue`, and the current route/state controller is `frontend/app/features/app/AppRouteController.vue`.
-- Frontend feature views live under `frontend/app/features/`; reusable cross-feature code lives under `frontend/app/shared/{components,composables,utils}`.
-- Frontend route records and route-to-state mapping live together in `frontend/app/routing/routes.js`.
+- Backend is a Go HTTP service in `backend/cmd/divevault`; it serves `/api/*`, `/health`, `/config.js`, and built frontend assets from `FRONTEND_DIR`.
+- PostgreSQL schema and migrations live in `backend/internal/migrations`; bump `CurrentSchemaVersion` when adding schema migrations.
+- Frontend is a Nuxt 4 app under `frontend/`; entrypoint is `frontend/app/app.vue`, the layout shell is `frontend/app/layouts/default.vue`, and routing is handled via native Nuxt pages in `frontend/app/pages/`.
+- Frontend feature views live under `frontend/app/features/`; reusable cross-feature code lives under `frontend/app/shared/{components,composables,utils,services}`.
+- Shared domain stores live in `frontend/app/shared/composables/` (`useDivesStore`, `useProfileStore`, `useEquipmentStore`).
+- Frontend route helper utilities live in `frontend/app/routing/routes.js`.
 - Frontend env is loaded from the repo root via `nuxt.config.js` (`vite.envDir: repoRoot`); `VITE_API_PROXY_TARGET` controls the dev proxy target and defaults to `http://127.0.0.1:8000`.
 
 ## Setup And Commands
-- Backend deps: Go toolchain matching `backend-go/go.mod`.
-- Run backend locally from the repo root with `.env` copied from `.env.example`: `go run ./backend-go/cmd/divevault --database-url postgresql://dive:dive@localhost:5432/dive`.
-- Run external schema migration from the repo root: `go run ./backend-go/cmd/divevault migrate` with `DATABASE_URL` set.
+- Backend deps: Go toolchain matching `backend/go.mod`.
+- Run backend locally from the repo root with `.env` copied from `.env.example`: `go run ./backend/cmd/divevault --database-url postgresql://dive:dive@localhost:5432/dive`.
+- Run external schema migration from the repo root: `go run ./backend/cmd/divevault migrate` with `DATABASE_URL` set.
 - Frontend deps use npm and `frontend/package-lock.json`: `cd frontend && npm ci`.
 - Frontend dev server: `cd frontend && npm run dev`; backend API requests are proxied to `VITE_API_PROXY_TARGET`.
 - Frontend checks: `cd frontend && npm run check:structure`, `npm run check:contracts`, `npm run lint`, and `npm run format:check`.
 - Full local Docker stack is documented as `docker compose -f examples/docker/docker-compose.yml up --build`.
 
 ## Verification
-- CI backend test command: `cd backend-go && go test ./...`; from the repo root use `go test ./backend-go/...`.
-- Focused backend test from the repo root: `go test ./backend-go/internal/auth -run Test`.
+- CI backend test command: `cd backend && go test ./...`; from the repo root use `go test ./backend/...`.
+- Focused backend test from the repo root: `go test ./backend/internal/auth -run Test`.
 - CI frontend test command: `cd frontend && npm test`; Playwright starts the Nuxt static preview on `127.0.0.1:4173` automatically.
 - Focused frontend test: `cd frontend && npx playwright test tests/app.spec.js -g "public profile" --project=chromium`.
 - `cd frontend && npm run build` runs Playwright first, then `nuxt generate`; use `npm run build:app` only when you intentionally want build without tests, as CI does for release assets.
@@ -41,13 +42,11 @@
 - The backend Docker image is built from `backend/Dockerfile`; it builds frontend assets with Node, compiles the Go backend, and runs without Python in the final image.
 - CI publishes image/release version tags from `frontend/package.json` `version`, not from a backend manifest.
 
-## Fork Maintenance & Target Deployment
-- **Surgical Changes & Upstream Alignment**: Keep all modifications as minimal and functional as possible to resolve issues while minimizing drift from upstream. Preserve existing contracts (`contracts/api-routes.json`) and architecture patterns.
-- **PR-Ready Topic Branches**: Where possible, implement fixes and features as self-contained units on dedicated topic branches (`fix/...`, `feat/...`) branched from clean upstream code, ready for individual pull requests. Do not include fork-specific deployment settings in PR commits.
-- **Clean Upstream Sync**: Keep the tracking branch (`master`) clean and identical to `upstream/master`.
-- **User Verification Before Merge**: Never merge topic branches into `unraid` automatically. Keep the topic branch active for the user to test and review, and only merge into the local deployment branch (`unraid`) after explicit confirmation.
+## Fork Architecture & Target Deployment
+- **Independent Fork**: This fork has fully transitioned to the Go backend (`backend/`) and Nuxt 4 native pages (`frontend/app/pages/`), eliminating the legacy Python backend and upstream rewrite trackers.
 - **Target Deployment**: Docker Compose on Unraid behind NPMplus (Nginx Proxy Manager Plus), supervised by CrowdSec with AppSec.
 - **Proxy & AppSec Compatibility**:
   - Respect reverse proxy headers (`X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host`) for real client IP detection, cookie security (`Secure`, `SameSite`), and base URLs.
   - Keep HTTP contracts, payload structures, headers, and status codes standard and predictable to prevent false positives in CrowdSec AppSec / WAF inspections.
+- **Quality & Testing**: Keep all Playwright and Go test suites passing on `unraid` before merging new feature branches.
 

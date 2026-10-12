@@ -16,14 +16,16 @@
   <a href="./docs/DEVELOPMENT.md">Developer Docs</a>
 </p>
 
-DiveVault is a self-hosted dive logbook for importing dive computer telemetry, reviewing new dives, and building a searchable logbook with sites, buddies, gear, maps, and public profile sharing.
+## About This Fork (`unraid` branch)
 
-The app is built around a simple flow:
+This repository is an actively maintained, modernized fork of DiveVault tailored for self-hosting (Docker Compose on Unraid behind reverse proxies like NPMplus / CrowdSec):
 
-1. Import dives from a supported dive computer.
-2. Review imported drafts before they enter the logbook.
-3. Add site, buddy, guide, equipment, and notes.
-4. Browse your dive history, maps, statistics, and equipment records.
+- **Pure Go Backend**: The legacy Python backend and transitional rewrite shims have been completely removed. The backend is now a single, performant Go HTTP service located in [`backend/`](./backend).
+- **Nuxt 4 Frontend**: Modernized Single-Page Application using Vue 3 Composition API, Nuxt UI, Tailwind CSS, domain stores (`useDivesStore`, `useProfileStore`), and native file-based page routing in `frontend/app/pages/`.
+- **Direct In-Browser Dive Computer Download (WebSerial + Wasm)**: Connect your dive computer via USB/Serial and download telemetry directly inside your browser (Chrome/Edge) using an embedded WebAssembly build of [`libdivecomputer`](https://libdivecomputer.org/). No separate desktop agents or Python bridge scripts required.
+- **Optimized Database Layer**: Selective telemetry SQL queries (slashing dive list network payloads by ~90%), server-side PostgreSQL aggregate statistics (`COUNT`, `SUM`, `MAX`, `AVG`), and non-destructive atomic profile updates (`ON CONFLICT ... DO UPDATE`).
+- **Log Import & Migration**: Staged review queue for WebSerial computer downloads, spreadsheet CSV imports, and Subsurface XML/SSRF logs.
+- **Proxy & AppSec Ready**: First-class support for `X-Forwarded-*` headers, secure cookie flags, and clean predictable API contracts suitable for CrowdSec AppSec / WAF inspection.
 
 ## Quick Start
 
@@ -39,40 +41,9 @@ This starts PostgreSQL, runs the database migration job, and serves DiveVault at
 http://localhost:8000
 ```
 
-The published container runs the Go backend binary and includes the generated frontend assets.
+The published container runs the Go backend binary and serves the compiled frontend assets directly.
 
-For production use, review `.env.example` and configure secrets, public URLs, authentication settings, database credentials, and backup storage before exposing the service.
-
-## Kubernetes
-
-Raw Kubernetes manifests are available in `examples/kubernetes/divevault.yaml`:
-
-```powershell
-kubectl apply -f examples/kubernetes/divevault.yaml
-kubectl wait --for=condition=complete job/divevault-db-migrate --timeout=180s
-kubectl rollout status deployment/divevault-backend
-```
-
-Forward the backend service locally:
-
-```powershell
-kubectl port-forward service/divevault-backend 8000:8000
-```
-
-A Helm chart is maintained separately at:
-
-```text
-https://github.com/jLemmings/helm-charts/tree/master/charts/divevault
-```
-
-Install it with:
-
-```powershell
-git clone https://github.com/jLemmings/helm-charts.git
-helm upgrade --install divevault ./helm-charts/charts/divevault -f your-values.yaml
-```
-
-Before deploying, review image tags, database settings, ingress, secrets, and whether startup migrations should be enabled for your setup.
+For production use (e.g. Unraid with NPMplus), review `.env.example` and configure your database credentials, JWT secrets, CORS origin, and reverse proxy headers.
 
 ## Screenshots
 
@@ -90,24 +61,28 @@ Before deploying, review image tags, database settings, ingress, secrets, and wh
 
 ## Features
 
-- Import queue for reviewing dive computer data before it becomes part of the logbook.
-- Detailed dive pages with telemetry, location maps, site details, buddies, guides, equipment, and notes.
-- Manual dive entry when no computer import is available.
-- Dashboard with recent activity, dive statistics, and a world imagery map.
-- Saved dive sites, buddies, guides, certifications, and equipment.
-- Public profile sharing for selected dives.
-- Backup and restore tools for self-hosted instances.
-- English, German, and French interface localization.
+- **Direct Dive Computer Download**: Read dive computers directly via WebSerial in supported browsers using compiled Wasm `libdivecomputer`.
+- **Import Review Queue**: Review, validate, and enrich imported dive computer drafts before committing them into the logbook.
+- **Detailed Dive Telemetry**: Visual profile charts, temperature curves, pressure tracking, SAC rates, location maps, buddies, guides, and equipment.
+- **Manual Dive Entry**: Complete form with dive site autocomplete, gas mixtures, gear selection, and environmental conditions.
+- **Dashboard & Maps**: Lifetime statistics computed via PostgreSQL aggregates, recent activity, and Leaflet world map with satellite imagery.
+- **Data Management**: CSV and Subsurface export imports, CSV logbook exports, minimal PDF export, and full backup/restore archives.
+- **Public Diver Profile**: Share selected logbook records and profile cards via public link.
+- **Localization**: English, German, and French interface support.
 
 ## Import Workflow
 
 DiveVault keeps raw imports separate from finished logbook entries. Imported dives arrive in a review queue where they can be enriched with missing metadata, corrected, or discarded. Once approved, the dive moves into the main logbook.
 
-The companion importer handles device reads and upload requests. The web app also imports spreadsheet CSV files and Subsurface XML/SSRF exports from Settings -> Data Management. See the [migration and import guide](./docs/MIGRATION.md) for CSV columns, Subsurface export steps, limits, and review workflow details.
+Imports can be triggered via:
+1. **Direct USB/Serial**: Click *Connect Dive Computer* in the import screen to read directly from supported devices via WebSerial.
+2. **File Imports**: Upload spreadsheet `.csv` files or Subsurface `.xml` / `.ssrf` / `.zip` exports from *Settings -> Data Management*.
+
+See the [migration and import guide](./docs/MIGRATION.md) for CSV format specifications and Subsurface details.
 
 ## Developer Docs
 
-Development setup, backend and frontend commands, testing, migrations, architecture notes, and release details live in [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md).
+Development setup, backend and frontend commands, testing, migrations, and architecture notes live in [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md).
 
 ## License & Copyright
 

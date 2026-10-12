@@ -4,20 +4,20 @@ This document is for contributors and maintainers. The main README is intentiona
 
 ## Repository Layout
 
-- Backend: Go HTTP service in `backend-go/cmd/divevault`.
+- Backend: Go HTTP service in `backend/cmd/divevault`.
 - API/runtime: serves `/api/*`, `/health`, `/config.js`, and built frontend assets from `FRONTEND_DIR`.
-- Database: PostgreSQL schema and migrations live in `backend-go/internal/migrations`.
+- Database: PostgreSQL schema and migrations live in `backend/internal/migrations`.
 - Frontend: Nuxt-powered Vue 3 app under `frontend/`, with Nuxt UI registered as the component library.
-- Frontend entrypoint: `frontend/app/app.vue`, which wraps the app in Nuxt UI's app provider and mounts the DiveVault shell.
-- Frontend shell: `frontend/app/components/DiveVaultApp.vue`; the current route/state controller is `frontend/app/features/app/AppRouteController.vue`.
-- Frontend route records and path-to-state mapping live together in `frontend/app/routing/routes.js`.
-- Feature views live under `frontend/app/features/`; reusable cross-feature code lives under `frontend/app/shared/{components,composables,utils}`.
+- Frontend entrypoint: `frontend/app/app.vue`, which wraps the app in Nuxt UI's app provider.
+- Frontend layout & routing: `frontend/app/layouts/default.vue` provides the main app shell, with native Nuxt 4 file-based page routing in `frontend/app/pages/`.
+- Frontend route utilities live in `frontend/app/routing/routes.js`.
+- Feature views live under `frontend/app/features/`; reusable cross-feature code lives under `frontend/app/shared/{components,composables,utils,services}`.
 - Frontend env: loaded from the repository root by Nuxt configuration in `frontend/nuxt.config.js`.
 - Dev API proxy: `VITE_API_PROXY_TARGET`, defaulting to `http://127.0.0.1:8000`.
 - Import aliases use Nuxt app-root paths by default: `~/features/...`, `~/shared/...`, `~/routing/...`, and `~/i18n/...`. `nuxt.config.js` also defines `#features`, `#shared`, `#routing`, and `#i18n` for explicit infrastructure imports.
 - AI-assisted Nuxt UI work should read `frontend/llms.txt` first for the project-local Nuxt UI LLM context and official documentation links.
 
-When adding database migrations, update `CurrentSchemaVersion` in `backend-go/internal/migrations`.
+When adding database migrations, update `CurrentSchemaVersion` in `backend/internal/migrations`.
 
 ## Dev Container
 
@@ -48,7 +48,7 @@ Copy the sample environment and start the backend:
 
 ```powershell
 Copy-Item .env.example .env
-go run ./backend-go/cmd/divevault --database-url postgresql://dive:dive@localhost:5432/dive
+go run ./backend/cmd/divevault --database-url postgresql://dive:dive@localhost:5432/dive
 ```
 
 The backend expects PostgreSQL to be available unless tests are using fakes or mocks. The Docker Compose setup in `examples/docker/docker-compose.yml` is the easiest way to get a local database.
@@ -72,7 +72,7 @@ For local single-instance development, startup migrations are enabled by default
 For external migration workflows, set `DATABASE_URL` and run:
 
 ```powershell
-go run ./backend-go/cmd/divevault migrate --database-url $env:DATABASE_URL
+go run ./backend/cmd/divevault migrate --database-url $env:DATABASE_URL
 ```
 
 For multi-instance deployments, run migrations as a separate job and set:
@@ -86,13 +86,13 @@ STARTUP_MIGRATIONS=disabled
 Run backend tests from the repository root:
 
 ```powershell
-go test ./backend-go/...
+go test ./backend/...
 ```
 
 Focused backend example:
 
 ```powershell
-go test ./backend-go/internal/auth -run Test
+go test ./backend/internal/auth -run Test
 ```
 
 Run frontend tests from `frontend/`:

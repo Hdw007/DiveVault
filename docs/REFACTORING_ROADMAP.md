@@ -43,7 +43,7 @@ DiveVault was built as a hybrid Go HTTP service and Nuxt 4 single-page applicati
 
 ### 2.4 Database & Backend: Destructive Profile Deletes & Memory Waste
 - **Unoptimized SQL in `ListDives`**:
-  - In `backend-go/internal/store/domain.go`, `ListDives` queries `raw_data` (BYTEA) and `samples_json` (JSONB) on *every single query*, regardless of whether samples or raw data were requested. It parses the JSON in memory before discarding the fields.
+  - In `backend/internal/store/domain.go`, `ListDives` queries `raw_data` (BYTEA) and `samples_json` (JSONB) on *every single query*, regardless of whether samples or raw data were requested. It parses the JSON in memory before discarding the fields.
 - **Destructive Profile Saves**:
   - In `SaveUserProfile`, whenever any profile setting is modified, `replaceProfileCollection` executes `DELETE FROM user_profile_dive_sites WHERE user_id=$1;` (and similarly for buddies and guides) and re-inserts all items in a loop with newly generated fallback IDs.
 - **Lack of Relational Integrity**:
@@ -73,12 +73,12 @@ Status Legend:
   - Update `DiveDetail.vue` to fetch the full dive payload (`GET /api/dives/:id?include_samples=1`) on mount.
   - Verify dashboard, logs list, and import queue remain fully functional with lightweight payloads.
 - [x] **1.2 Selective SQL Queries (Backend)**
-  - Modify `ListDives` and `ListAllDives` in `backend-go/internal/store/domain.go` to exclude `raw_data` and `samples_json` from the SQL `SELECT` statement unless `includeSamples` or `includeRawData` is true.
+  - Modify `ListDives` and `ListAllDives` in `backend/internal/store/domain.go` to exclude `raw_data` and `samples_json` from the SQL `SELECT` statement unless `includeSamples` or `includeRawData` is true.
   - Keep `GetDive(id)` loading full data for detail views.
 - [x] **1.3 Non-Destructive Profile Updates (Backend)**
-  - Refactor `replaceProfileCollection` in `backend-go/internal/store/domain.go` to use atomic UPSERT (`ON CONFLICT (user_id, <id_col>) DO UPDATE`) and transactional deletion of only removed IDs, preserving existing IDs and avoiding table-wide deletes.
+  - Refactor `replaceProfileCollection` in `backend/internal/store/domain.go` to use atomic UPSERT (`ON CONFLICT (user_id, <id_col>) DO UPDATE`) and transactional deletion of only removed IDs, preserving existing IDs and avoiding table-wide deletes.
 - [x] **1.4 Verification**
-  - Run full backend Go test suite (`go test ./backend-go/...`).
+  - Run full backend Go test suite (`go test ./backend/...`).
   - Run full Playwright test suite (`cd frontend && npm test`).
 
 ---
@@ -133,7 +133,7 @@ Status Legend:
 
 - [x] **4.1 SQL Statistics Aggregation (Phase 4A)**
   - Create a dedicated database query using PostgreSQL aggregates (`COUNT(*)`, `SUM(duration_seconds)`, `MAX(max_depth_m)`, `AVG(max_depth_m)`) rather than loading and summing dives in Go memory.
-  - Implement `GetDiverStats(ctx, userID)` in `backend-go/internal/store/domain.go` to compute lifetime dashboard totals accurately across paginated lists.
+  - Implement `GetDiverStats(ctx, userID)` in `backend/internal/store/domain.go` to compute lifetime dashboard totals accurately across paginated lists.
 - [x] **4.2 Native Nuxt Page Routing & Shell Modernization (Phase 4B)**
   - Fully eliminate simulated router monolith (`AppRouteController.vue` & `NuxtRouteShell.vue`).
   - Introduce native Nuxt 4 `app/pages/` hierarchy for all routes and `app/layouts/default.vue` application shell.

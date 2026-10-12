@@ -10,12 +10,12 @@ RUN npm run build:app
 
 FROM golang:1.27.1-bookworm AS backend-build
 
-WORKDIR /src/backend-go
+WORKDIR /src/backend
 
-COPY backend-go/go.mod backend-go/go.sum ./
+COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 
-COPY backend-go ./
+COPY backend ./
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/divevault ./cmd/divevault
 
 FROM debian:13-slim

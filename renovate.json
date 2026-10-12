@@ -26,16 +26,7 @@
       ],
       "groupName": "frontend npm dependencies"
     },
-    {
-      "matchManagers": [
-        "pip_requirements"
-      ],
-      "matchFileNames": [
-        "backend/requirements.txt",
-        "backend/requirements-dev.txt"
-      ],
-      "groupName": "python requirements"
-    },
+
     {
       "matchManagers": [
         "dockerfile",
