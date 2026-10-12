@@ -10,8 +10,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    ports:
-      - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
 
@@ -42,14 +40,13 @@ services:
       MAX_BACKUP_IMPORT_BYTES: 26214400
       MAX_LIST_LIMIT: 200
       RATE_LIMIT_WINDOW_SECONDS: 60
-      RATE_LIMIT_CLI_REQUEST_PER_WINDOW: 30
-      RATE_LIMIT_CLI_APPROVE_PER_WINDOW: 15
       RATE_LIMIT_BACKUP_IMPORT_PER_WINDOW: 10
       RATE_LIMIT_DIVE_UPLOAD_PER_WINDOW: 120
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-dev-only-change-me}
       AUTH_JWT_ISSUER: ${AUTH_JWT_ISSUER:-divevault.local}
       AUTH_JWT_AUDIENCE: ${AUTH_JWT_AUDIENCE:-divevault.app}
-      AUTH_TOKEN_TTL_SECONDS: ${AUTH_TOKEN_TTL_SECONDS:-43200}
+      AUTH_TOKEN_TTL_SECONDS: ${AUTH_TOKEN_TTL_SECONDS:-7200}
+      DEMO_MODE: ${DEMO_MODE:-false}
       LOG_LEVEL: INFO
     ports:
       - "8000:8000"

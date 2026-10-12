@@ -10,8 +10,6 @@ export const API_ENDPOINTS = {
   authStatus: `${API}/auth/status`,
   backupExport: `${API}/backup/export`,
   backupImport: `${API}/backup/import`,
-  cliAuthApprove: `${API}/cli-auth/approve`,
-  cliAuthRequest: `${API}/cli-auth/request`,
   deviceState: `${API}/device-state`,
   dives: `${API}/dives`,
   equipment: `${API}/equipment`,
@@ -27,10 +25,6 @@ export const API_ENDPOINTS = {
 
 export function authStatusUrl(query = "") {
   return `${API_ENDPOINTS.authStatus}${query}`;
-}
-
-export function cliAuthApproveUrl() {
-  return API_ENDPOINTS.cliAuthApprove;
 }
 
 export function deviceStateUrl(vendor, product) {

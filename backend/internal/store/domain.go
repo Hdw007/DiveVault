@@ -66,6 +66,16 @@ func (db *DB) GetDeviceState(ctx context.Context, userID string, vendor string, 
 	return state, err
 }
 
+func saveDeviceStateTx(ctx context.Context, tx pgx.Tx, userID string, vendor string, product string, fingerprintHex *string) error {
+	_, err := tx.Exec(ctx, `
+        INSERT INTO device_state(user_id, vendor, product, fingerprint_hex, updated_at)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (user_id, vendor, product)
+        DO UPDATE SET fingerprint_hex=excluded.fingerprint_hex, updated_at=excluded.updated_at
+    `, cleanText(userID), cleanText(vendor), cleanText(product), fingerprintHex, nowISO())
+	return err
+}
+
 func (db *DB) SaveDeviceState(ctx context.Context, userID string, vendor string, product string, fingerprintHex *string) error {
 	_, err := db.pool.Exec(ctx, `
         INSERT INTO device_state(user_id, vendor, product, fingerprint_hex, updated_at)
@@ -76,7 +86,7 @@ func (db *DB) SaveDeviceState(ctx context.Context, userID string, vendor string,
 	return err
 }
 
-func (db *DB) InsertDiveRecord(ctx context.Context, userID string, payload map[string]any) (bool, error) {
+func insertDiveRecordTx(ctx context.Context, tx pgx.Tx, userID string, payload map[string]any) (bool, error) {
 	rawB64, _ := payload["raw_data_b64"].(string)
 	rawData, err := base64.StdEncoding.DecodeString(rawB64)
 	if err != nil {
@@ -113,7 +123,7 @@ func (db *DB) InsertDiveRecord(ctx context.Context, userID string, payload map[s
 	if importedAt == "" {
 		importedAt = nowISO()
 	}
-	tag, err := db.pool.Exec(ctx, `
+	tag, err := tx.Exec(ctx, `
         INSERT INTO dives(user_id, vendor, product, fingerprint_hex, dive_uid, started_at, duration_seconds, duration_ms, max_depth_m, avg_depth_m, import_payload_json, fields_json, raw_sha256, raw_data, samples_json, imported_at)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
         ON CONFLICT (user_id, dive_uid) DO NOTHING
@@ -123,6 +133,60 @@ func (db *DB) InsertDiveRecord(ctx context.Context, userID string, payload map[s
 	}
 	return tag.RowsAffected() > 0, nil
 }
+
+func (db *DB) InsertDiveRecord(ctx context.Context, userID string, payload map[string]any) (bool, error) {
+	tx, err := db.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+	ok, err := insertDiveRecordTx(ctx, tx, userID, payload)
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return ok, nil
+}
+
+func (db *DB) InsertDivesBatch(ctx context.Context, userID string, payloads []map[string]any) (int, []int64, error) {
+	if db == nil || db.pool == nil {
+		return 0, nil, errors.New("database is not configured")
+	}
+	tx, err := db.pool.Begin(ctx)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	inserted := 0
+	ids := make([]int64, 0, len(payloads))
+
+	for _, payload := range payloads {
+		ok, err := insertDiveRecordTx(ctx, tx, userID, payload)
+		if err != nil {
+			return 0, nil, err
+		}
+		if ok {
+			inserted++
+		}
+		diveUID := stringValue(payload["dive_uid"])
+		var id int64
+		err = tx.QueryRow(ctx, "SELECT id FROM dives WHERE user_id=$1 AND dive_uid=$2", cleanText(userID), cleanText(diveUID)).Scan(&id)
+		if err == nil {
+			ids = append(ids, id)
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return 0, nil, err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, nil, err
+	}
+	return inserted, ids, nil
+}
+
 
 func (db *DB) GetDiveIDByUID(ctx context.Context, userID string, diveUID string) (*int64, error) {
 	var id int64
@@ -520,8 +584,7 @@ func (db *DB) GetUserProfile(ctx context.Context, userID string) (map[string]any
 	return profile, nil
 }
 
-func (db *DB) SaveUserProfile(ctx context.Context, userID string, payload map[string]any) (map[string]any, error) {
-	existing, _ := db.GetUserProfile(ctx, userID)
+func saveUserProfileTx(ctx context.Context, tx pgx.Tx, userID string, payload map[string]any, existing map[string]any) error {
 	name := stringOrExisting(payload["name"], existing["name"])
 	email := stringOrExisting(payload["email"], existing["email"])
 	publicSlug := stringOrExisting(payload["public_slug"], existing["public_slug"])
@@ -529,12 +592,7 @@ func (db *DB) SaveUserProfile(ctx context.Context, userID string, payload map[st
 	equipmentSelection := boolOrExisting(payload["equipment_selection_enabled"], existing["equipment_selection_enabled"])
 	displayJSON, _ := json.Marshal(valueOr(payload["logbook_display_fields"], existing["logbook_display_fields"]))
 	requiredJSON, _ := json.Marshal(valueOr(payload["required_logbook_fields"], existing["required_logbook_fields"]))
-	tx, err := db.pool.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback(ctx)
-	_, err = tx.Exec(ctx, `
+	_, err := tx.Exec(ctx, `
         INSERT INTO user_profile(user_id, name, email, public_dives_enabled, public_slug, logbook_display_fields_json, required_logbook_fields_json, equipment_selection_enabled, updated_at)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         ON CONFLICT (user_id) DO UPDATE SET
@@ -544,27 +602,40 @@ func (db *DB) SaveUserProfile(ctx context.Context, userID string, payload map[st
             equipment_selection_enabled=excluded.equipment_selection_enabled, updated_at=excluded.updated_at
     `, cleanText(userID), name, email, publicEnabled, publicSlug, displayJSON, requiredJSON, equipmentSelection, nowISO())
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if value, ok := payload["licenses"]; ok {
 		if err := replaceProfileCollection(ctx, tx, "user_profile_licenses", "license_id", userID, sliceValue(value), []string{"company", "certification_name", "student_number", "certification_date", "instructor_number"}); err != nil {
-			return nil, err
+			return err
 		}
 	}
 	if value, ok := payload["dive_sites"]; ok {
 		if err := replaceProfileCollection(ctx, tx, "user_profile_dive_sites", "site_id", userID, sliceValue(value), []string{"name", "location", "country", "latitude", "longitude"}); err != nil {
-			return nil, err
+			return err
 		}
 	}
 	if value, ok := payload["buddies"]; ok {
 		if err := replaceProfileCollection(ctx, tx, "user_profile_buddies", "buddy_id", userID, sliceValue(value), []string{"name"}); err != nil {
-			return nil, err
+			return err
 		}
 	}
 	if value, ok := payload["guides"]; ok {
 		if err := replaceProfileCollection(ctx, tx, "user_profile_guides", "guide_id", userID, sliceValue(value), []string{"name"}); err != nil {
-			return nil, err
+			return err
 		}
+	}
+	return nil
+}
+
+func (db *DB) SaveUserProfile(ctx context.Context, userID string, payload map[string]any) (map[string]any, error) {
+	existing, _ := db.GetUserProfile(ctx, userID)
+	tx, err := db.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	if err := saveUserProfileTx(ctx, tx, userID, payload, existing); err != nil {
+		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
@@ -585,26 +656,42 @@ func (db *DB) GetProfileLicensePDF(ctx context.Context, userID string, licenseID
 	return filename, contentType, data, err
 }
 
-func (db *DB) SaveProfileLicensePDF(ctx context.Context, userID string, licenseID string, filename string, contentType string, data []byte) (map[string]any, error) {
+func saveProfileLicensePDFTx(ctx context.Context, tx pgx.Tx, userID string, licenseID string, filename string, contentType string, data []byte) error {
 	var exists int
-	err := db.pool.QueryRow(ctx, "SELECT 1 FROM user_profile_licenses WHERE user_id=$1 AND license_id=$2", cleanText(userID), cleanText(licenseID)).Scan(&exists)
+	err := tx.QueryRow(ctx, "SELECT 1 FROM user_profile_licenses WHERE user_id=$1 AND license_id=$2", cleanText(userID), cleanText(licenseID)).Scan(&exists)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
+		return fmt.Errorf("License %s does not exist in profile", licenseID)
 	}
 	if err != nil {
-		return nil, err
+		return err
 	}
-	_, err = db.pool.Exec(ctx, `
+	_, err = tx.Exec(ctx, `
         INSERT INTO user_profile_license_documents(user_id, license_id, filename, content_type, pdf_data, uploaded_at)
         VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT (user_id, license_id)
         DO UPDATE SET filename=excluded.filename, content_type=excluded.content_type, pdf_data=excluded.pdf_data, uploaded_at=excluded.uploaded_at
     `, cleanText(userID), cleanText(licenseID), cleanText(filename), cleanText(contentType), data, nowISO())
+	return err
+}
+
+func (db *DB) SaveProfileLicensePDF(ctx context.Context, userID string, licenseID string, filename string, contentType string, data []byte) (map[string]any, error) {
+	tx, err := db.pool.Begin(ctx)
 	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	if err := saveProfileLicensePDFTx(ctx, tx, userID, licenseID, filename, contentType, data); err != nil {
+		if strings.Contains(err.Error(), "does not exist") {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	return db.GetUserProfile(ctx, userID)
 }
+
 
 func (db *DB) PublicProfile(ctx context.Context, slug string) (map[string]any, []Dive, error) {
 	var userID string
@@ -999,14 +1086,14 @@ func equipmentServiceStatusForDive(item map[string]any, diveStartedAt any) map[s
 
 	if diveDate == nil {
 		return map[string]any{
-			"service_status":   "unknown",
+			"service_status":  "unknown",
 			"service_due_date": "",
 			"service_message":  "Dive date is unavailable.",
 		}
 	}
 	if lastServiceDate == nil || interval <= 0 {
 		return map[string]any{
-			"service_status":   "unknown",
+			"service_status":  "unknown",
 			"service_due_date": "",
 			"service_message":  "Service date or interval is missing.",
 		}
@@ -1017,14 +1104,14 @@ func equipmentServiceStatusForDive(item map[string]any, diveStartedAt any) map[s
 
 	if lastServiceDate.After(*diveDate) {
 		return map[string]any{
-			"service_status":   "unknown",
+			"service_status":  "unknown",
 			"service_due_date": serviceDueDateStr,
 			"service_message":  "Latest service date is after this dive.",
 		}
 	}
 	if diveDate.After(serviceDueDate) {
 		return map[string]any{
-			"service_status":   "overdue",
+			"service_status":  "overdue",
 			"service_due_date": serviceDueDateStr,
 			"service_message":  "Service was overdue for this dive.",
 		}
@@ -1035,7 +1122,7 @@ func equipmentServiceStatusForDive(item map[string]any, diveStartedAt any) map[s
 		status = "due_soon"
 	}
 	return map[string]any{
-		"service_status":   status,
+		"service_status":  status,
 		"service_due_date": serviceDueDateStr,
 		"service_message":  "",
 	}
@@ -1092,7 +1179,7 @@ func equipmentServiceSummary(item map[string]any, committedDiveCount int, servic
 	}
 
 	return map[string]any{
-		"dives_since_service":            divesSinceService,
+		"dives_since_service":             divesSinceService,
 		"dives_remaining_before_service": divesRemaining,
 		"service_due":                    diveDue || dateDue,
 		"service_due_reason":             serviceDueReason,
@@ -1135,13 +1222,7 @@ func (db *DB) ListEquipment(ctx context.Context, userID string) ([]map[string]an
 	return items, rows.Err()
 }
 
-func (db *DB) SaveEquipment(ctx context.Context, userID string, entries []any) ([]map[string]any, error) {
-	tx, err := db.pool.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback(ctx)
-
+func saveEquipmentTx(ctx context.Context, tx pgx.Tx, userID string, entries []any) error {
 	oldEquipmentNames := map[string]string{}
 	eqRows, err := tx.Query(ctx, "SELECT equipment_id, name FROM user_equipment WHERE user_id=$1", cleanText(userID))
 	if err == nil {
@@ -1155,7 +1236,7 @@ func (db *DB) SaveEquipment(ctx context.Context, userID string, entries []any) (
 	}
 
 	if _, err := tx.Exec(ctx, "DELETE FROM user_equipment WHERE user_id=$1", cleanText(userID)); err != nil {
-		return nil, err
+		return err
 	}
 
 	type eqRename struct {
@@ -1188,14 +1269,27 @@ func (db *DB) SaveEquipment(ctx context.Context, userID string, entries []any) (
             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
         `, cleanText(userID), id, stringValue(item["name"]), stringValue(item["category"]), stringValue(item["icon"]), stringValue(item["type"]), nullableInt64(item["year_bought"]), stringValue(item["vendor"]), stringValue(item["brand"]), stringValue(item["model"]), stringValue(item["serial"]), stringValue(item["warranty"]), nextServiceDue, intervalMonths, lastServiceDate, nullableInt64(item["max_dives_before_service"]), boolOrExisting(item["track_service"], true), stringValue(item["service_tag"]), boolOrExisting(item["is_default"], false), boolOrExisting(item["is_standard"], false), nullableString(item["last_serviced_at"]), intValue(item["last_service_dive_count"]), nowISO())
 		if err != nil {
-			return nil, err
+			return err
 		}
 	}
 
 	for _, r := range renames {
 		if err := cascadeEquipmentRename(ctx, tx, userID, r.id, r.oldName, r.newName); err != nil {
-			return nil, err
+			return err
 		}
+	}
+	return nil
+}
+
+func (db *DB) SaveEquipment(ctx context.Context, userID string, entries []any) ([]map[string]any, error) {
+	tx, err := db.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	if err := saveEquipmentTx(ctx, tx, userID, entries); err != nil {
+		return nil, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -1203,6 +1297,110 @@ func (db *DB) SaveEquipment(ctx context.Context, userID string, entries []any) (
 	}
 	return db.ListEquipment(ctx, userID)
 }
+
+func (db *DB) ImportBackupTransactional(ctx context.Context, userID string, payload map[string]any) (map[string]any, error) {
+	if db == nil || db.pool == nil {
+		return nil, errors.New("database is not configured")
+	}
+
+	tx, err := db.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	profile := mapValue(payload["profile"])
+	if len(profile) > 0 {
+		existing, _ := db.GetUserProfile(ctx, userID)
+		if err := saveUserProfileTx(ctx, tx, userID, profile, existing); err != nil {
+			return nil, err
+		}
+	}
+
+	equipmentImported := 0
+	if equipment, ok := payload["equipment"].([]any); ok {
+		if err := saveEquipmentTx(ctx, tx, userID, equipment); err != nil {
+			return nil, err
+		}
+		equipmentImported = len(equipment)
+	}
+
+	deviceStatesImported := 0
+	if states, ok := payload["device_states"].([]any); ok {
+		for _, state := range states {
+			item := mapValue(state)
+			vendor := stringValue(item["vendor"])
+			product := stringValue(item["product"])
+			if vendor == "" || product == "" {
+				return nil, errors.New("Backup device state is missing vendor or product")
+			}
+			fingerprint := nullableString(item["fingerprint_hex"])
+			if err := saveDeviceStateTx(ctx, tx, userID, vendor, product, fingerprint); err != nil {
+				return nil, err
+			}
+			deviceStatesImported++
+		}
+	}
+
+	divesInserted := 0
+	divesInBackup := 0
+	if dives, ok := payload["dives"].([]any); ok {
+		divesInBackup = len(dives)
+		for _, dive := range dives {
+			item := mapValue(dive)
+			ok, err := insertDiveRecordTx(ctx, tx, userID, item)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				divesInserted++
+			}
+		}
+	}
+
+	licenseDocumentsImported := 0
+	if documents, ok := payload["license_documents"].([]any); ok {
+		for _, document := range documents {
+			item := mapValue(document)
+			licenseID := stringValue(item["license_id"])
+			dataB64 := stringValue(item["data_b64"])
+			if licenseID == "" || dataB64 == "" {
+				continue
+			}
+			data, err := base64.StdEncoding.DecodeString(dataB64)
+			if err != nil {
+				return nil, fmt.Errorf("Invalid base64 PDF data for license %s", licenseID)
+			}
+			filename := stringValue(item["filename"])
+			if filename == "" {
+				filename = "license.pdf"
+			}
+			contentType := stringValue(item["content_type"])
+			if contentType == "" {
+				contentType = "application/pdf"
+			}
+			if err := saveProfileLicensePDFTx(ctx, tx, userID, licenseID, filename, contentType, data); err != nil {
+				return nil, err
+			}
+			licenseDocumentsImported++
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+
+	return map[string]any{
+		"summary": map[string]any{
+			"dives_in_backup":           divesInBackup,
+			"dives_inserted":           divesInserted,
+			"device_states_imported":    deviceStatesImported,
+			"equipment_imported":        equipmentImported,
+			"license_documents_imported": licenseDocumentsImported,
+		},
+	}, nil
+}
+
 
 func cascadeEquipmentRename(ctx context.Context, tx pgx.Tx, userID string, equipmentID string, oldName string, newName string) error {
 	rows, err := tx.Query(ctx, `

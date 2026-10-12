@@ -23,14 +23,11 @@ export function encodePathSegment(value) {
 
 export function legacyHashToPath(hash) {
   const normalizedHash = String(hash || "").replace(/^#/, "");
-  const [view, segment, value] = normalizedHash.split("/");
+  const [view, segment] = normalizedHash.split("/");
   if (view === "imports") return segment ? `/imports/${encodePathSegment(segment)}` : "/imports";
   if (view === "edit") return segment ? `/logs/${encodePathSegment(segment)}/edit` : "/logs";
   if (view === "create") return "/logs/create";
   if (view === "settings") {
-    if (segment === "cli-auth") {
-      return `/settings/cli-auth/${encodePathSegment(value || "")}`;
-    }
     return segment ? `/settings/${encodePathSegment(segment)}` : "/settings";
   }
   if (view === "logs") return segment ? `/logs/${encodePathSegment(segment)}` : "/logs";

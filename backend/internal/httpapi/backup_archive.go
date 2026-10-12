@@ -120,14 +120,33 @@ func validateBackupPayload(payload map[string]any) error {
 			return errors.New("Backup dive " + strconv.Itoa(index+1) + " is missing required fields: " + strings.Join(missing, ", "))
 		}
 	}
+	profileLicenses := map[string]bool{}
+	if profile, ok := payload["profile"].(map[string]any); ok {
+		for _, lic := range sliceValue(profile["licenses"]) {
+			item := mapValue(lic)
+			id := stringAny(valueOr(item["id"], item["license_id"]))
+			if id != "" {
+				profileLicenses[id] = true
+			}
+		}
+	}
 	for index, document := range sliceValue(payload["license_documents"]) {
 		item := mapValue(document)
-		if stringAny(item["license_id"]) == "" {
+		licID := stringAny(item["license_id"])
+		if licID == "" {
 			return errors.New("Backup license document " + strconv.Itoa(index+1) + " is missing license_id")
 		}
-		if stringAny(item["data_b64"]) == "" {
+		if len(profileLicenses) > 0 && !profileLicenses[licID] {
+			return errors.New("License " + licID + " does not exist in the imported profile")
+		}
+		dataB64 := stringAny(item["data_b64"])
+		if dataB64 == "" {
 			return errors.New("Backup license document " + strconv.Itoa(index+1) + " is missing data_b64")
+		}
+		if _, err := base64.StdEncoding.DecodeString(dataB64); err != nil {
+			return errors.New("Backup license document " + strconv.Itoa(index+1) + " has invalid base64 data")
 		}
 	}
 	return nil
 }
+

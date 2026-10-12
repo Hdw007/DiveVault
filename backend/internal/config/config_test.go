@@ -99,3 +99,24 @@ func TestParseHelpersFallbackOnInvalidInput(t *testing.T) {
 		t.Fatalf("warning should parse warn")
 	}
 }
+
+func TestConfigValidateRequiresStrongSecretOutsideDemoMode(t *testing.T) {
+	for _, badSecret := range []string{"", "dev-only-change-me", "replace-me", "change-me", "too-short"} {
+		cfg := Config{AuthJWTSecret: badSecret, DemoMode: false}
+		if err := cfg.Validate(); err == nil {
+			t.Fatalf("expected error for secret %q outside demo mode, got nil", badSecret)
+		}
+	}
+
+	goodSecret := "12345678901234567890123456789012"
+	cfg := Config{AuthJWTSecret: goodSecret, DemoMode: false}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected valid secret to pass, got: %v", err)
+	}
+
+	// In demo mode, default/weak secret is permitted
+	demoCfg := Config{AuthJWTSecret: "dev-only-change-me", DemoMode: true}
+	if err := demoCfg.Validate(); err != nil {
+		t.Fatalf("expected demo mode to allow weak secret, got: %v", err)
+	}
+}

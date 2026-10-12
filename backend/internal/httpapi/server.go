@@ -46,10 +46,9 @@ type Context struct {
 
 func NewServer(cfg config.Config, logger *slog.Logger, db *store.DB) *Server {
 	authVerifier := auth.Verifier{
-		Secret:            cfg.AuthJWTSecret,
-		Issuer:            cfg.AuthJWTIssuer,
-		Audience:          cfg.AuthJWTAudience,
-		SyncTokenVerifier: syncVerifier{db: db},
+		Secret:   cfg.AuthJWTSecret,
+		Issuer:   cfg.AuthJWTIssuer,
+		Audience: cfg.AuthJWTAudience,
 	}
 	return &Server{
 		cfg:     cfg,
@@ -180,11 +179,14 @@ func (s *Server) applyRoutePolicy(w http.ResponseWriter, r *http.Request, route 
 		}
 	}
 	if route.RateLimitScope != "" {
-		allowed, retryAfter := s.limiter.Allow(route.RateLimitScope+":"+s.clientIP(r), s.rateLimit(route.RateLimitScope), s.cfg.RateLimitWindowSeconds)
-		if !allowed {
-			w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
-			writeJSON(w, s.cfg.CORSOrigin, http.StatusTooManyRequests, map[string]string{"error": "Rate limit exceeded. Please retry later."})
-			return nil, "", false
+		limit := s.rateLimit(route.RateLimitScope)
+		if limit > 0 {
+			allowed, retryAfter := s.allowRateLimit(r.Context(), route.RateLimitScope+":"+s.clientIP(r), limit, s.cfg.RateLimitWindowSeconds)
+			if !allowed {
+				w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+				writeJSON(w, s.cfg.CORSOrigin, http.StatusTooManyRequests, map[string]string{"error": "Rate limit exceeded. Please retry later."})
+				return nil, "", false
+			}
 		}
 	}
 	if route.Auth == AuthNone {
@@ -200,18 +202,38 @@ func (s *Server) applyRoutePolicy(w http.ResponseWriter, r *http.Request, route 
 		writeJSON(w, s.cfg.CORSOrigin, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 		return nil, "", false
 	}
+	if source, _ := claims["auth_source"].(string); source == "cookie" {
+		if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodDelete || r.Method == http.MethodPatch {
+			if !s.isTrustedOrigin(r) {
+				writeJSON(w, s.cfg.CORSOrigin, http.StatusForbidden, map[string]string{"error": "CSRF validation failed: untrusted origin"})
+				return nil, "", false
+			}
+		}
+	}
 	principalID := auth.PrincipalID(claims)
+	if principalID == "" {
+		writeJSON(w, s.cfg.CORSOrigin, http.StatusForbidden, map[string]string{"error": "Authenticated identity is missing a stable user identifier"})
+		return nil, "", false
+	}
+	if s.db != nil {
+		user, err := s.db.GetAuthUserByID(r.Context(), principalID)
+		if err != nil {
+			writeJSON(w, s.cfg.CORSOrigin, http.StatusServiceUnavailable, map[string]string{"error": "Database unavailable: " + err.Error()})
+			return nil, "", false
+		}
+		if user == nil {
+			writeJSON(w, s.cfg.CORSOrigin, http.StatusUnauthorized, map[string]string{"error": "User account no longer exists"})
+			return nil, "", false
+		}
+		if !user.IsActive {
+			writeJSON(w, s.cfg.CORSOrigin, http.StatusForbidden, map[string]string{"error": "User account is disabled"})
+			return nil, "", false
+		}
+		claims["role"] = user.Role
+	}
 	switch route.Auth {
 	case AuthPrincipal:
-		if principalID == "" {
-			writeJSON(w, s.cfg.CORSOrigin, http.StatusForbidden, map[string]string{"error": "Authenticated identity is missing a stable user identifier"})
-			return nil, "", false
-		}
 	case AuthOwner:
-		if principalID == "" {
-			writeJSON(w, s.cfg.CORSOrigin, http.StatusForbidden, map[string]string{"error": "Authenticated identity is missing a stable user identifier"})
-			return nil, "", false
-		}
 		settings, err := s.authSettings(r.Context())
 		if err != nil {
 			writeJSON(w, s.cfg.CORSOrigin, http.StatusServiceUnavailable, map[string]string{"error": "Database unavailable: " + err.Error()})
@@ -219,12 +241,6 @@ func (s *Server) applyRoutePolicy(w http.ResponseWriter, r *http.Request, route 
 		}
 		if principalID != settings.OwnerUserID {
 			writeJSON(w, s.cfg.CORSOrigin, http.StatusForbidden, map[string]string{"error": "Instance owner required"})
-			return nil, "", false
-		}
-	case AuthBrowserSession:
-		tokenType, _ := claims["token_type"].(string)
-		if tokenType != "session_token" {
-			writeJSON(w, s.cfg.CORSOrigin, http.StatusForbidden, map[string]string{"error": "Desktop sync approval requires an authenticated browser session"})
 			return nil, "", false
 		}
 	}
@@ -323,6 +339,7 @@ func applySecurityHeaders(header http.Header) {
 	header.Set("X-Frame-Options", "DENY")
 	header.Set("Referrer-Policy", "strict-origin-when-cross-origin")
 	header.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(self), serial=(self)")
+	header.Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.tile.openstreetmap.org https://tile.openstreetmap.org; font-src 'self'; connect-src 'self' https://nominatim.openstreetmap.org; object-src 'none'; base-uri 'self'; frame-ancestors 'none';")
 }
 
 func mustJSON(payload any) string {
@@ -363,21 +380,6 @@ func contains(values []string, target string) bool {
 		}
 	}
 	return false
-}
-
-type syncVerifier struct {
-	db *store.DB
-}
-
-func (v syncVerifier) VerifyToken(ctx context.Context, token string) (auth.Claims, error) {
-	if v.db == nil {
-		return nil, errors.New("database is not configured")
-	}
-	claims, err := v.db.VerifyCLIAuthToken(ctx, token, time.Now().Unix())
-	if err != nil || claims == nil {
-		return nil, err
-	}
-	return auth.Claims(claims), nil
 }
 
 func readJSON(r *http.Request, dst any) error {
@@ -421,10 +423,10 @@ func inviteURL(token string) string {
 
 func (s *Server) rateLimit(scope string) int {
 	switch scope {
-	case "cli_auth_request_create", "cli_auth_request_status":
-		return s.cfg.RateLimitCLIRequestPerWindow
-	case "cli_auth_approve":
-		return s.cfg.RateLimitCLIApprovePerWindow
+	case "auth_login":
+		return s.cfg.RateLimitAuthLoginPerWindow
+	case "auth_register":
+		return s.cfg.RateLimitAuthRegisterPerWindow
 	case "backup_import":
 		return s.cfg.RateLimitBackupImportPerWindow
 	case "dive_upload":
@@ -434,29 +436,90 @@ func (s *Server) rateLimit(scope string) int {
 	}
 }
 
-func (s *Server) clientIP(r *http.Request) string {
+func (s *Server) allowRateLimit(ctx context.Context, key string, limit int, windowSeconds int) (bool, int) {
+	if s.db != nil {
+		allowed, _, err := s.db.AllowRateLimit(ctx, key, limit, windowSeconds)
+		if err == nil {
+			if !allowed {
+				return false, windowSeconds
+			}
+			return true, 0
+		}
+	}
+	return s.limiter.Allow(key, limit, windowSeconds)
+}
+
+func isTrustedProxy(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
+}
+
+func (s *Server) rawRemoteIP(r *http.Request) string {
 	host := r.RemoteAddr
-	if s.cfg.TrustForwardedHeaders {
-		if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {
-			host = realIP
-		}
-	}
-	if s.cfg.TrustForwardedHeaders {
-		if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
-			host = strings.TrimSpace(strings.Split(forwarded, ",")[0])
-		}
-	}
-	if parsed := net.ParseIP(host); parsed != nil {
-		return parsed.String()
-	}
 	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
-		return parsedHost
-	}
-	if host == "" {
-		return "unknown"
+		host = parsedHost
 	}
 	return host
 }
+
+func (s *Server) clientIP(r *http.Request) string {
+	rawIP := s.rawRemoteIP(r)
+	parsedRemote := net.ParseIP(rawIP)
+	if s.cfg.TrustForwardedHeaders && isTrustedProxy(parsedRemote) {
+		if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {
+			if parsed := net.ParseIP(realIP); parsed != nil {
+				return parsed.String()
+			}
+		}
+		if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
+			first := strings.TrimSpace(strings.Split(forwarded, ",")[0])
+			if parsed := net.ParseIP(first); parsed != nil {
+				return parsed.String()
+			}
+		}
+	}
+	if parsedRemote != nil {
+		return parsedRemote.String()
+	}
+	if rawIP == "" {
+		return "unknown"
+	}
+	return rawIP
+}
+
+func (s *Server) isTrustedOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		referer := r.Header.Get("Referer")
+		if referer != "" {
+			if u, err := url.Parse(referer); err == nil && u.Scheme != "" && u.Host != "" {
+				origin = u.Scheme + "://" + u.Host
+			}
+		}
+	}
+	if origin == "" {
+		return false
+	}
+	if s.cfg.CORSOrigin != "" && strings.EqualFold(origin, s.cfg.CORSOrigin) {
+		return true
+	}
+	scheme := "http"
+	parsedRemote := net.ParseIP(s.rawRemoteIP(r))
+	if r.TLS != nil || (s.cfg.TrustForwardedHeaders && isTrustedProxy(parsedRemote) && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")) {
+		scheme = "https"
+	}
+	host := r.Host
+	if s.cfg.TrustForwardedHeaders && isTrustedProxy(parsedRemote) {
+		if fHost := r.Header.Get("X-Forwarded-Host"); fHost != "" {
+			host = strings.TrimSpace(strings.Split(fHost, ",")[0])
+		}
+	}
+	expected := scheme + "://" + host
+	return strings.EqualFold(origin, expected)
+}
+
 
 type statusRecorder struct {
 	http.ResponseWriter

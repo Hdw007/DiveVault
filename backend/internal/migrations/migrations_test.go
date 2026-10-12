@@ -7,8 +7,8 @@ import (
 )
 
 func TestCurrentSchemaVersion(t *testing.T) {
-	if CurrentSchemaVersion != 14 {
-		t.Fatalf("CurrentSchemaVersion = %d, expected 14", CurrentSchemaVersion)
+	if CurrentSchemaVersion != 15 {
+		t.Fatalf("CurrentSchemaVersion = %d, expected 15", CurrentSchemaVersion)
 	}
 }
 
@@ -48,7 +48,7 @@ func TestCurrentSchemaDefinesRequiredTables(t *testing.T) {
 		"user_profile_dive_sites",
 		"user_profile_buddies",
 		"user_profile_guides",
-		"cli_sync_auth_requests",
+		"rate_limits",
 		"auth_users",
 		"auth_instance_settings",
 		"auth_user_invites",

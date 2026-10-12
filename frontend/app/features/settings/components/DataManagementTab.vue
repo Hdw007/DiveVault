@@ -28,10 +28,6 @@ export default {
     DiveComputerImportModal
   },
   props: {
-    cliAuthCode: {
-      type: String,
-      default: ""
-    },
     uploadCsvImport: {
       type: Function,
       default: null
@@ -67,9 +63,6 @@ export default {
       dataManagementStatus: "",
       dataManagementWarning: "",
       dataManagementError: "",
-      desktopSyncApproving: false,
-      desktopSyncStatus: "",
-      desktopSyncError: "",
       importReadyForReview: false,
       importPreview: null,
       pendingImportFile: null,
@@ -78,14 +71,11 @@ export default {
     };
   },
   computed: {
-    hasCliAuthCode() {
-      return Boolean(this.cliAuthCode);
-    },
     isDataManagementBusy() {
       return Boolean(this.dataManagementAction);
     },
     isInteractionLocked() {
-      return this.isDataManagementBusy || this.desktopSyncApproving;
+      return this.isDataManagementBusy;
     },
     canConfirmImportPreview() {
       return Boolean(this.importPreview && !this.isDataManagementBusy && Number(this.importPreview.valid_rows || 0) > 0);
@@ -275,37 +265,6 @@ export default {
       this.importPreview = null;
       this.resetDataManagementFeedback();
     },
-    async approveDesktopSync() {
-      if (!this.cliAuthCode) return;
-
-      this.desktopSyncApproving = true;
-      this.desktopSyncStatus = "";
-      this.desktopSyncError = "";
-
-      try {
-        const token = await this.authGetToken({ skipCache: true });
-        const response = await fetch("/api/cli-auth/approve", {
-          method: "POST",
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {})
-          },
-          body: JSON.stringify({ code: this.cliAuthCode })
-        });
-        const payload = await response.json().catch(() => null);
-        if (!response.ok) {
-          throw new Error(payload?.error || `API returned ${response.status}`);
-        }
-        this.desktopSyncStatus = payload?.email
-          ? `Desktop sync approved for ${payload.email}. Return to the Windows app to continue.`
-          : "Desktop sync approved. Return to the Windows app to continue.";
-      } catch (error) {
-        this.desktopSyncError = error?.message || "Could not approve the desktop sync client.";
-      } finally {
-        this.desktopSyncApproving = false;
-      }
-    },
     handleDiveComputerImported() {
       this.dataManagementStatus = "Dive computer import completed. New dives are ready for logbook review.";
       this.importReadyForReview = true;
@@ -324,7 +283,7 @@ export default {
     <div class="settings-card-header">
       <div>
         <p class="font-label text-[10px] font-bold uppercase tracking-[0.24em] text-primary">Data Management</p>
-        <h4 class="mt-2 font-headline text-3xl font-bold tracking-tight text-on-surface">Exports And Desktop Sync</h4>
+        <h4 class="mt-2 font-headline text-3xl font-bold tracking-tight text-on-surface">Exports And Log Management</h4>
         <p class="mt-3 max-w-3xl text-sm leading-7 text-secondary">
           The actions below are organized as clear task cards instead of one long button list.
         </p>
@@ -483,27 +442,6 @@ export default {
         <p v-if="importPreview.dives.length > 10" class="mt-3 text-xs text-secondary">
           Showing first 10 of {{ importPreview.dives.length }} rows.
         </p>
-      </div>
-    </div>
-
-    <div v-if="hasCliAuthCode" class="mt-8 rounded-2xl border border-primary/15 bg-surface-container-low p-6">
-      <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <p class="font-label text-[10px] font-bold uppercase tracking-[0.24em] text-primary">Desktop App Sync</p>
-          <h4 class="mt-2 font-headline text-2xl font-bold tracking-tight text-on-surface">Approve Dive Computer Sync</h4>
-          <p class="mt-2 text-sm text-secondary">
-            A desktop helper requested permission to upload dive logs from your dive computer directly to this account.
-          </p>
-          <div v-if="desktopSyncStatus" class="settings-feedback mt-4 border-primary/20 bg-primary/10 text-primary">
-            {{ desktopSyncStatus }}
-          </div>
-          <div v-if="desktopSyncError" class="settings-feedback mt-4 border-error/20 bg-error-container/20 text-on-error-container">
-            {{ desktopSyncError }}
-          </div>
-        </div>
-        <UButton @click="approveDesktopSync" :disabled="desktopSyncApproving" class="settings-button settings-button-primary shrink-0">
-          {{ desktopSyncApproving ? "Approving..." : "Approve Sync" }}
-        </UButton>
       </div>
     </div>
 

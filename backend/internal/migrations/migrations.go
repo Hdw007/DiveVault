@@ -11,7 +11,7 @@ import (
 	"github.com/jlemmings/divevault/backend/internal/store"
 )
 
-const CurrentSchemaVersion = 14
+const CurrentSchemaVersion = 15
 
 const schemaSQL = `
 CREATE TABLE IF NOT EXISTS device_state (
@@ -101,17 +101,10 @@ CREATE TABLE IF NOT EXISTS user_profile_guides (
     PRIMARY KEY (user_id, guide_id)
 );
 
-CREATE TABLE IF NOT EXISTS cli_sync_auth_requests (
-    code TEXT PRIMARY KEY,
-    status TEXT NOT NULL,
-    created_at BIGINT NOT NULL,
-    expires_at BIGINT NOT NULL,
-    approved_at BIGINT,
-    token TEXT UNIQUE,
-    token_expires_at BIGINT,
-    user_id TEXT,
-    email TEXT,
-    session_id TEXT
+CREATE TABLE IF NOT EXISTS rate_limits (
+    key TEXT PRIMARY KEY,
+    count INTEGER NOT NULL,
+    reset_at BIGINT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS auth_users (
@@ -274,7 +267,7 @@ func migrations() []migration {
 	return []migration{
 		{version: 1, sql: migrationV1SQL},
 		{version: 2, fn: migrationV2},
-		{version: 3, sql: migrationV3SQL},
+		{version: 3, fn: migrationV3},
 		{version: 4, sql: migrationV4SQL},
 		{version: 5, sql: migrationV5SQL},
 		{version: 6, sql: migrationV6SQL},
@@ -293,6 +286,7 @@ UPDATE user_equipment SET service_tag='' WHERE service_tag IS NULL;`},
 UPDATE user_profile SET required_logbook_fields_json='["site"]'::jsonb WHERE required_logbook_fields_json IS NULL;`},
 		{version: 14, sql: `ALTER TABLE user_equipment ADD COLUMN IF NOT EXISTS icon TEXT NOT NULL DEFAULT '';
 UPDATE user_equipment SET icon='' WHERE icon IS NULL;`},
+		{version: 15, sql: migrationV15SQL},
 	}
 }
 
@@ -388,6 +382,115 @@ CREATE INDEX IF NOT EXISTS idx_cli_sync_auth_requests_expires_at ON cli_sync_aut
 CREATE INDEX IF NOT EXISTS idx_cli_sync_auth_requests_token_expires_at ON cli_sync_auth_requests (token_expires_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_cli_sync_auth_requests_token ON cli_sync_auth_requests (token) WHERE token IS NOT NULL;
 `
+
+func migrationV3(ctx context.Context, tx pgx.Tx) error {
+	var hasLicensesJSON bool
+	_ = tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns 
+			WHERE table_name='user_profile' AND column_name='licenses_json'
+		)
+	`).Scan(&hasLicensesJSON)
+
+	if hasLicensesJSON {
+		_, err := tx.Exec(ctx, `
+			INSERT INTO user_profile_licenses (user_id, license_id, company, certification_name, student_number, certification_date, instructor_number)
+			SELECT 
+				up.user_id,
+				COALESCE(NULLIF(elem->>'id', ''), NULLIF(elem->>'license_id', ''), 'lic_' || row_number() OVER (PARTITION BY up.user_id)) AS license_id,
+				NULLIF(elem->>'company', ''),
+				NULLIF(elem->>'certification_name', ''),
+				NULLIF(elem->>'student_number', ''),
+				NULLIF(elem->>'certification_date', ''),
+				NULLIF(elem->>'instructor_number', '')
+			FROM user_profile up,
+			LATERAL jsonb_array_elements(
+				CASE 
+					WHEN jsonb_typeof(COALESCE(up.licenses_json, '[]'::jsonb)) = 'array' THEN up.licenses_json 
+					ELSE '[]'::jsonb 
+				END
+			) AS elem
+			ON CONFLICT (user_id, license_id) DO NOTHING;
+
+			INSERT INTO user_profile_dive_sites (user_id, site_id, name, location, country, latitude, longitude)
+			SELECT 
+				up.user_id,
+				COALESCE(NULLIF(elem->>'id', ''), NULLIF(elem->>'site_id', ''), 'site_' || row_number() OVER (PARTITION BY up.user_id)) AS site_id,
+				NULLIF(elem->>'name', ''),
+				NULLIF(elem->>'location', ''),
+				NULLIF(elem->>'country', ''),
+				CASE WHEN (elem->>'latitude') ~ '^-?[0-9]+(\.[0-9]+)?$' THEN (elem->>'latitude')::double precision ELSE NULL END,
+				CASE WHEN (elem->>'longitude') ~ '^-?[0-9]+(\.[0-9]+)?$' THEN (elem->>'longitude')::double precision ELSE NULL END
+			FROM user_profile up,
+			LATERAL jsonb_array_elements(
+				CASE 
+					WHEN jsonb_typeof(COALESCE(up.dive_sites_json, '[]'::jsonb)) = 'array' THEN up.dive_sites_json 
+					ELSE '[]'::jsonb 
+				END
+			) AS elem
+			ON CONFLICT (user_id, site_id) DO NOTHING;
+
+			INSERT INTO user_profile_buddies (user_id, buddy_id, name)
+			SELECT 
+				up.user_id,
+				COALESCE(NULLIF(elem->>'id', ''), NULLIF(elem->>'buddy_id', ''), 'buddy_' || row_number() OVER (PARTITION BY up.user_id)) AS buddy_id,
+				COALESCE(NULLIF(elem->>'name', ''), CASE WHEN jsonb_typeof(elem) = 'string' THEN elem #>> '{}' ELSE '' END)
+			FROM user_profile up,
+			LATERAL jsonb_array_elements(
+				CASE 
+					WHEN jsonb_typeof(COALESCE(up.buddies_json, '[]'::jsonb)) = 'array' THEN up.buddies_json 
+					ELSE '[]'::jsonb 
+				END
+			) AS elem
+			ON CONFLICT (user_id, buddy_id) DO NOTHING;
+
+			INSERT INTO user_profile_guides (user_id, guide_id, name)
+			SELECT 
+				up.user_id,
+				COALESCE(NULLIF(elem->>'id', ''), NULLIF(elem->>'guide_id', ''), 'guide_' || row_number() OVER (PARTITION BY up.user_id)) AS guide_id,
+				COALESCE(NULLIF(elem->>'name', ''), CASE WHEN jsonb_typeof(elem) = 'string' THEN elem #>> '{}' ELSE '' END)
+			FROM user_profile up,
+			LATERAL jsonb_array_elements(
+				CASE 
+					WHEN jsonb_typeof(COALESCE(up.guides_json, '[]'::jsonb)) = 'array' THEN up.guides_json 
+					ELSE '[]'::jsonb 
+				END
+			) AS elem
+			ON CONFLICT (user_id, guide_id) DO NOTHING;
+
+			INSERT INTO user_profile_licenses (user_id, license_id, company, certification_name, student_number, certification_date, instructor_number)
+			SELECT 
+				up.user_id,
+				'legacy-default',
+				NULLIF(up.license_company, ''),
+				COALESCE(NULLIF(up.license_certification_name, ''), NULLIF(up.certification, '')),
+				COALESCE(NULLIF(up.license_student_number, ''), NULLIF(up.registry, '')),
+				NULLIF(up.license_certification_date, ''),
+				NULLIF(up.license_instructor_number, '')
+			FROM user_profile up
+			WHERE (up.license_company IS NOT NULL OR up.license_certification_name IS NOT NULL OR up.certification IS NOT NULL)
+			ON CONFLICT (user_id, license_id) DO NOTHING;
+
+			INSERT INTO user_profile_license_documents (user_id, license_id, filename, content_type, pdf_data, uploaded_at)
+			SELECT 
+				up.user_id,
+				'legacy-default',
+				COALESCE(NULLIF(up.license_pdf_name, ''), 'license.pdf'),
+				COALESCE(NULLIF(up.license_pdf_content_type, ''), 'application/pdf'),
+				up.license_pdf_data,
+				COALESCE(NULLIF(up.license_pdf_uploaded_at, ''), NOW()::text)
+			FROM user_profile up
+			WHERE up.license_pdf_data IS NOT NULL
+			ON CONFLICT (user_id, license_id) DO NOTHING;
+		`)
+		if err != nil {
+			return err
+		}
+	}
+
+	_, err := tx.Exec(ctx, migrationV3SQL)
+	return err
+}
 
 const migrationV3SQL = `
 ALTER TABLE user_profile DROP COLUMN IF EXISTS licenses_json;
@@ -513,3 +616,14 @@ UPDATE user_equipment SET category=type WHERE category='' AND type<>'';
 UPDATE user_equipment SET name=BTRIM(CONCAT_WS(' ', NULLIF(brand, ''), NULLIF(type, ''))) WHERE name='';
 UPDATE user_equipment SET is_default=is_standard WHERE is_default=FALSE AND is_standard=TRUE;
 `
+
+const migrationV15SQL = `
+CREATE TABLE IF NOT EXISTS rate_limits (
+    key TEXT PRIMARY KEY,
+    count INTEGER NOT NULL,
+    reset_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rate_limits_reset_at ON rate_limits (reset_at);
+DROP TABLE IF EXISTS cli_sync_auth_requests;
+`
+

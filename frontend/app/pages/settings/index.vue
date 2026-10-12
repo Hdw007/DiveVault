@@ -27,7 +27,6 @@ function uploadSubsurfaceImport(file, options = {}) {
 
 <template>
   <SettingsView
-    cli-auth-code=""
     :active-section="DEFAULT_SETTINGS_SECTION"
     :set-active-section="setSettingsSection"
     :profile-updated="handleProfileUpdated"

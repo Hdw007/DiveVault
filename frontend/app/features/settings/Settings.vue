@@ -28,10 +28,6 @@ export default {
     SettingsRemovalModal
   },
   props: {
-    cliAuthCode: {
-      type: String,
-      default: ""
-    },
     activeSection: {
       type: String,
       default: () => SETTINGS_SECTIONS[0]?.id || "diver-details"
@@ -238,7 +234,6 @@ export default {
           <guides-tab v-if="activeSettingsSection === 'dive-guide'" />
           <data-management-tab
             v-if="activeSettingsSection === 'data-management'"
-            :cli-auth-code="cliAuthCode"
             :upload-csv-import="uploadCsvImport"
             :upload-subsurface-import="uploadSubsurfaceImport"
             :open-import-queue="openImportQueue"

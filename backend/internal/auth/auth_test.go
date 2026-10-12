@@ -100,24 +100,8 @@ func TestVerifyRequestUsesSessionCookie(t *testing.T) {
 	if PrincipalID(claims) != "user_cookie" {
 		t.Fatalf("PrincipalID = %q", PrincipalID(claims))
 	}
-}
-
-func TestVerifyRequestUsesSyncVerifier(t *testing.T) {
-	request := httptest.NewRequest(http.MethodGet, "/api/dives", nil)
-	request.Header.Set("Authorization", "Bearer dvsync_token")
-	verifier := Verifier{SyncTokenVerifier: syncTokenVerifierFunc(func(_ context.Context, token string) (Claims, error) {
-		if token != "dvsync_token" {
-			t.Fatalf("token = %q", token)
-		}
-		return Claims{"user_id": "sync-user", "token_type": "cli_sync"}, nil
-	})}
-
-	claims, err := verifier.VerifyRequest(context.Background(), request)
-	if err != nil {
-		t.Fatalf("VerifyRequest returned error: %v", err)
-	}
-	if PrincipalID(claims) != "sync-user" {
-		t.Fatalf("PrincipalID = %q", PrincipalID(claims))
+	if claims["auth_source"] != "cookie" {
+		t.Fatalf("auth_source = %v, expected 'cookie'", claims["auth_source"])
 	}
 }
 
@@ -127,10 +111,4 @@ func TestPrincipalIDFallbacks(t *testing.T) {
 			t.Fatalf("expected principal for %+v", claims)
 		}
 	}
-}
-
-type syncTokenVerifierFunc func(context.Context, string) (Claims, error)
-
-func (f syncTokenVerifierFunc) VerifyToken(ctx context.Context, token string) (Claims, error) {
-	return f(ctx, token)
 }

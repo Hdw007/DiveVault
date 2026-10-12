@@ -43,18 +43,6 @@ type Invite struct {
 	ExpiresAt       int64  `json:"expires_at"`
 }
 
-type CLIAuthRequest struct {
-	Code           string  `json:"code"`
-	Status         string  `json:"status"`
-	CreatedAt      int64   `json:"created_at"`
-	ExpiresAt      int64   `json:"expires_at"`
-	ApprovedAt     *int64  `json:"approved_at"`
-	Token          *string `json:"token"`
-	TokenExpiresAt *int64  `json:"token_expires_at"`
-	UserID         *string `json:"user_id"`
-	Email          *string `json:"email"`
-}
-
 func (db *DB) GetAuthInstanceSettings(ctx context.Context) (AuthSettings, error) {
 	if err := db.ensureAuthInstanceSettings(ctx); err != nil {
 		return AuthSettings{}, err
@@ -370,77 +358,8 @@ func (db *DB) CreateAuthUserFromInvite(ctx context.Context, inviteToken string, 
 	return db.GetAuthUserByID(ctx, userID)
 }
 
-func (db *DB) CreateCLIAuthRequest(ctx context.Context, code string, requestTTLSeconds int, now int64) (CLIAuthRequest, error) {
-	if err := db.cleanupCLIAuth(ctx, now); err != nil {
-		return CLIAuthRequest{}, err
-	}
-	entry := CLIAuthRequest{Code: code, Status: "pending", CreatedAt: now, ExpiresAt: now + int64(max(requestTTLSeconds, 1))}
-	_, err := db.pool.Exec(ctx, `
-        INSERT INTO cli_sync_auth_requests(code, status, created_at, expires_at, approved_at, token, token_expires_at, user_id, email, session_id)
-        VALUES ($1, $2, $3, $4, NULL, NULL, NULL, NULL, NULL, NULL)
-    `, entry.Code, entry.Status, entry.CreatedAt, entry.ExpiresAt)
-	return entry, err
-}
-
-func (db *DB) GetCLIAuthRequestStatus(ctx context.Context, code string, now int64) (*CLIAuthRequest, error) {
-	if err := db.cleanupCLIAuth(ctx, now); err != nil {
-		return nil, err
-	}
-	return db.queryCLIAuthRequest(ctx, "SELECT code, status, created_at, expires_at, approved_at, token, token_expires_at, user_id, email FROM cli_sync_auth_requests WHERE code=$1", cleanText(code))
-}
-
-func (db *DB) ApproveCLIAuthRequest(ctx context.Context, code string, claims map[string]any, token string, tokenTTLSeconds int, now int64) (*CLIAuthRequest, error) {
-	if err := db.cleanupCLIAuth(ctx, now); err != nil {
-		return nil, err
-	}
-	tokenExpiresAt := now + int64(max(tokenTTLSeconds, 1))
-	return db.queryCLIAuthRequest(ctx, `
-        UPDATE cli_sync_auth_requests
-        SET status='approved', approved_at=$1, token=$2, token_expires_at=$3, user_id=$4, email=$5, session_id=$6
-        WHERE code=$7 AND status='pending' AND expires_at > $1
-        RETURNING code, status, created_at, expires_at, approved_at, token, token_expires_at, user_id, email
-    `, now, token, tokenExpiresAt, claimString(claims, "sub"), claimString(claims, "email"), claimString(claims, "sid"), cleanText(code))
-}
-
-func (db *DB) VerifyCLIAuthToken(ctx context.Context, token string, now int64) (map[string]any, error) {
-	if err := db.cleanupCLIAuth(ctx, now); err != nil {
-		return nil, err
-	}
-	var userID, email, sessionID string
-	var approvedAt, tokenExpiresAt int64
-	err := db.pool.QueryRow(ctx, `
-        SELECT COALESCE(user_id, ''), COALESCE(email, ''), COALESCE(session_id, ''), COALESCE(approved_at, 0), COALESCE(token_expires_at, 0)
-        FROM cli_sync_auth_requests WHERE token=$1 AND status='approved' AND token_expires_at > $2
-    `, token, now).Scan(&userID, &email, &sessionID, &approvedAt, &tokenExpiresAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"token_type": "cli_sync", "sub": userID, "email": email, "sid": sessionID, "issued_at": approvedAt, "expires_at": tokenExpiresAt}, nil
-}
-
-func (db *DB) queryCLIAuthRequest(ctx context.Context, sql string, args ...any) (*CLIAuthRequest, error) {
-	var entry CLIAuthRequest
-	err := db.pool.QueryRow(ctx, sql, args...).Scan(&entry.Code, &entry.Status, &entry.CreatedAt, &entry.ExpiresAt, &entry.ApprovedAt, &entry.Token, &entry.TokenExpiresAt, &entry.UserID, &entry.Email)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	return &entry, err
-}
-
 func (db *DB) cleanupAuthInvites(ctx context.Context, now int64) error {
 	_, err := db.pool.Exec(ctx, "DELETE FROM auth_user_invites WHERE accepted_at IS NOT NULL OR expires_at <= $1", now)
-	return err
-}
-
-func (db *DB) cleanupCLIAuth(ctx context.Context, now int64) error {
-	_, err := db.pool.Exec(ctx, `
-        DELETE FROM cli_sync_auth_requests
-        WHERE (status = 'pending' AND expires_at <= $1)
-           OR (status = 'approved' AND COALESCE(token_expires_at, 0) <= $1)
-    `, now)
 	return err
 }
 

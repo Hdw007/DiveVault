@@ -22,8 +22,6 @@ type Config struct {
 	AuthJWTAudience                string
 	AuthTokenTTLSeconds            int
 	DemoMode                       bool
-	CLIAuthRequestTTL              int
-	CLIAuthTokenTTL                int
 	NominatimBaseURL               string
 	NominatimUserAgent             string
 	NominatimEmail                 string
@@ -40,8 +38,8 @@ type Config struct {
 	RequestTimeoutSeconds          int
 	TrustForwardedHeaders          bool
 	RateLimitWindowSeconds         int
-	RateLimitCLIRequestPerWindow   int
-	RateLimitCLIApprovePerWindow   int
+	RateLimitAuthLoginPerWindow    int
+	RateLimitAuthRegisterPerWindow int
 	RateLimitBackupImportPerWindow int
 	RateLimitDiveUploadPerWindow   int
 	Metrics                        string
@@ -61,10 +59,8 @@ func Load(args []string) (Config, error) {
 	fs.StringVar(&cfg.AuthJWTSecret, "auth-jwt-secret", envString("AUTH_JWT_SECRET", "dev-only-change-me"), "JWT secret")
 	fs.StringVar(&cfg.AuthJWTIssuer, "auth-jwt-issuer", envString("AUTH_JWT_ISSUER", "divevault.local"), "JWT issuer")
 	fs.StringVar(&cfg.AuthJWTAudience, "auth-jwt-audience", envString("AUTH_JWT_AUDIENCE", "divevault.app"), "JWT audience")
-	fs.IntVar(&cfg.AuthTokenTTLSeconds, "auth-token-ttl-seconds", envInt("AUTH_TOKEN_TTL_SECONDS", 43200), "Session token TTL seconds")
+	fs.IntVar(&cfg.AuthTokenTTLSeconds, "auth-token-ttl-seconds", envInt("AUTH_TOKEN_TTL_SECONDS", 7200), "Session token TTL seconds")
 	demoMode := fs.String("demo-mode", envString("DEMO_MODE", "false"), "Demo mode")
-	fs.IntVar(&cfg.CLIAuthRequestTTL, "cli-auth-request-ttl", envInt("CLI_AUTH_REQUEST_TTL", 600), "CLI auth request TTL seconds")
-	fs.IntVar(&cfg.CLIAuthTokenTTL, "cli-auth-token-ttl", envInt("CLI_AUTH_TOKEN_TTL", 1800), "CLI auth token TTL seconds")
 	fs.StringVar(&cfg.NominatimBaseURL, "nominatim-base-url", envString("NOMINATIM_BASE_URL", "https://nominatim.openstreetmap.org"), "Nominatim base URL")
 	fs.StringVar(&cfg.NominatimUserAgent, "nominatim-user-agent", envString("NOMINATIM_USER_AGENT", "DiveVault/1.0"), "Nominatim user-agent")
 	fs.StringVar(&cfg.NominatimEmail, "nominatim-email", envString("NOMINATIM_EMAIL", ""), "Nominatim email")
@@ -81,8 +77,8 @@ func Load(args []string) (Config, error) {
 	fs.IntVar(&cfg.RequestTimeoutSeconds, "request-timeout-seconds", envInt("REQUEST_TIMEOUT_SECONDS", 30), "Request context timeout seconds")
 	trustForwardedHeaders := fs.String("trust-forwarded-headers", envString("TRUST_FORWARDED_HEADERS", "false"), "Trust X-Forwarded-* headers from a reverse proxy")
 	fs.IntVar(&cfg.RateLimitWindowSeconds, "rate-limit-window-seconds", envInt("RATE_LIMIT_WINDOW_SECONDS", 60), "Rate limit window seconds")
-	fs.IntVar(&cfg.RateLimitCLIRequestPerWindow, "rate-limit-cli-request-per-window", envInt("RATE_LIMIT_CLI_REQUEST_PER_WINDOW", 30), "CLI request rate limit")
-	fs.IntVar(&cfg.RateLimitCLIApprovePerWindow, "rate-limit-cli-approve-per-window", envInt("RATE_LIMIT_CLI_APPROVE_PER_WINDOW", 15), "CLI approve rate limit")
+	fs.IntVar(&cfg.RateLimitAuthLoginPerWindow, "rate-limit-auth-login-per-window", envInt("RATE_LIMIT_AUTH_LOGIN_PER_WINDOW", 10), "Auth login rate limit per window")
+	fs.IntVar(&cfg.RateLimitAuthRegisterPerWindow, "rate-limit-auth-register-per-window", envInt("RATE_LIMIT_AUTH_REGISTER_PER_WINDOW", 5), "Auth register rate limit per window")
 	fs.IntVar(&cfg.RateLimitBackupImportPerWindow, "rate-limit-backup-import-per-window", envInt("RATE_LIMIT_BACKUP_IMPORT_PER_WINDOW", 10), "Backup import rate limit")
 	fs.IntVar(&cfg.RateLimitDiveUploadPerWindow, "rate-limit-dive-upload-per-window", envInt("RATE_LIMIT_DIVE_UPLOAD_PER_WINDOW", 120), "Dive upload rate limit")
 	fs.StringVar(&cfg.Metrics, "metrics", envString("METRICS_ENABLED", "disabled"), "Metrics mode")
@@ -99,6 +95,19 @@ func Load(args []string) (Config, error) {
 	}
 	cfg.FrontendDir = resolveRepoPath(cfg.FrontendDir)
 	return cfg, nil
+}
+
+func (c Config) Validate() error {
+	if !c.DemoMode {
+		secret := strings.TrimSpace(c.AuthJWTSecret)
+		if secret == "" || secret == "dev-only-change-me" || secret == "replace-me" || secret == "change-me" {
+			return fmt.Errorf("AUTH_JWT_SECRET must be configured with a secure secret outside demo mode")
+		}
+		if len(secret) < 32 {
+			return fmt.Errorf("AUTH_JWT_SECRET must be at least 32 characters long outside demo mode (got %d chars)", len(secret))
+		}
+	}
+	return nil
 }
 
 func (c Config) Addr() string {

@@ -140,7 +140,7 @@ func TestReadJSONRejectsTrailingValues(t *testing.T) {
 }
 
 func TestClientIPTrustsForwardedHeadersOnlyWhenConfigured(t *testing.T) {
-	request := httptest.NewRequest(http.MethodGet, "/api/cli-auth/request", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/health", nil)
 	request.RemoteAddr = "10.0.0.5:12345"
 	request.Header.Set("X-Forwarded-For", "203.0.113.9, 10.0.0.1")
 
@@ -156,6 +156,32 @@ func TestClientIPTrustsForwardedHeadersOnlyWhenConfigured(t *testing.T) {
 		t.Fatalf("clientIP with trusted proxy = %q", got)
 	}
 }
+
+func TestClientIPRejectsForwardedHeadersFromPublicIP(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	request.RemoteAddr = "198.51.100.1:12345"
+	request.Header.Set("X-Forwarded-For", "203.0.113.9")
+
+	cfg := testConfig()
+	cfg.TrustForwardedHeaders = true
+	server := NewServer(cfg, slog.Default(), nil)
+	if got := server.clientIP(request); got != "198.51.100.1" {
+		t.Fatalf("expected clientIP to ignore forwarded headers from public IP, got %q", got)
+	}
+}
+
+func TestApplySecurityHeadersEmitsCSP(t *testing.T) {
+	header := http.Header{}
+	applySecurityHeaders(header)
+	csp := header.Get("Content-Security-Policy")
+	if !strings.Contains(csp, "default-src 'self'") {
+		t.Fatalf("expected CSP to contain default-src 'self', got %q", csp)
+	}
+	if !strings.Contains(csp, "frame-ancestors 'none'") {
+		t.Fatalf("expected CSP to contain frame-ancestors 'none', got %q", csp)
+	}
+}
+
 
 func TestBadRequestMessageReturnsValidationText(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/api/device-state", strings.NewReader(`{"vendor":"","product":""}`))

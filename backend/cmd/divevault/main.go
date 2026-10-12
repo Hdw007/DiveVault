@@ -30,6 +30,13 @@ func main() {
 		os.Exit(2)
 	}
 
+	if command == "serve" {
+		if err := cfg.Validate(); err != nil {
+			slog.Error("configuration validation failed", "error", err)
+			os.Exit(2)
+		}
+	}
+
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
 	slog.SetDefault(logger)
 

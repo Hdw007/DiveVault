@@ -26,15 +26,10 @@ func (e Error) Error() string {
 	return e.Message
 }
 
-type SyncTokenVerifier interface {
-	VerifyToken(context.Context, string) (Claims, error)
-}
-
 type Verifier struct {
-	Secret            string
-	Issuer            string
-	Audience          string
-	SyncTokenVerifier SyncTokenVerifier
+	Secret   string
+	Issuer   string
+	Audience string
 }
 
 func NormalizeBearerToken(value string) string {
@@ -53,21 +48,21 @@ func NormalizeBearerToken(value string) string {
 }
 
 func (v Verifier) VerifyRequest(ctx context.Context, r *http.Request) (Claims, error) {
-	token := NormalizeBearerToken(extractToken(r))
+	rawToken, fromCookie := extractToken(r)
+	token := NormalizeBearerToken(rawToken)
 	if token == "" {
 		return nil, Error{Status: http.StatusUnauthorized, Message: "Missing authentication bearer token"}
 	}
-	if strings.HasPrefix(token, "dvsync_") {
-		if v.SyncTokenVerifier == nil {
-			return nil, Error{Status: http.StatusServiceUnavailable, Message: "Desktop sync login is not configured on the backend"}
-		}
-		claims, err := v.SyncTokenVerifier.VerifyToken(ctx, token)
-		if err != nil || claims == nil {
-			return nil, Error{Status: http.StatusUnauthorized, Message: "Desktop sync token is invalid or expired"}
-		}
-		return claims, nil
+	claims, err := v.verifySessionToken(token)
+	if err != nil {
+		return nil, err
 	}
-	return v.verifySessionToken(token)
+	if fromCookie {
+		claims["auth_source"] = "cookie"
+	} else {
+		claims["auth_source"] = "header"
+	}
+	return claims, nil
 }
 
 func (v Verifier) verifySessionToken(tokenString string) (Claims, error) {
@@ -97,16 +92,16 @@ func (v Verifier) verifySessionToken(tokenString string) (Claims, error) {
 	return claims, nil
 }
 
-func extractToken(r *http.Request) string {
+func extractToken(r *http.Request) (string, bool) {
 	authorization := r.Header.Get("Authorization")
 	if strings.HasPrefix(strings.ToLower(authorization), "bearer ") {
-		return strings.TrimSpace(authorization[7:])
+		return strings.TrimSpace(authorization[7:]), false
 	}
 	cookie, err := r.Cookie("__session")
 	if err != nil {
-		return ""
+		return "", false
 	}
-	return cookie.Value
+	return cookie.Value, true
 }
 
 func PrincipalID(claims Claims) string {

@@ -370,23 +370,14 @@ func handleCSVImportPost(ctx *Context) {
 		return
 	}
 	markDuplicateRows(ctx, rows)
-	inserted := 0
-	ids := []int64{}
-	for _, payload := range payloads {
-		ok, err := ctx.Server.db.InsertDiveRecord(ctx.Request.Context(), ctx.PrincipalID, payload)
-		if err != nil {
-			writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusBadRequest, map[string]string{"error": err.Error(), "summary": ""})
-			return
-		}
-		if ok {
-			inserted++
-		}
-		if id, _ := ctx.Server.db.GetDiveIDByUID(ctx.Request.Context(), ctx.PrincipalID, stringAny(payload["dive_uid"])); id != nil {
-			ids = append(ids, *id)
-		}
+	inserted, ids, err := ctx.Server.db.InsertDivesBatch(ctx.Request.Context(), ctx.PrincipalID, payloads)
+	if err != nil {
+		writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusBadRequest, map[string]string{"error": err.Error(), "summary": ""})
+		return
 	}
 	summary = importSummary(rows, &inserted, ids)
 	writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusOK, map[string]any{"rows": len(rows), "inserted": inserted, "duplicates": summary["duplicates"], "ids": ids, "summary": summary})
+
 }
 
 func handleSubsurfaceImportPost(ctx *Context) {
@@ -417,23 +408,14 @@ func handleSubsurfaceImportPost(ctx *Context) {
 		return
 	}
 	markDuplicateRows(ctx, rows)
-	inserted := 0
-	ids := []int64{}
-	for _, payload := range payloads {
-		ok, err := ctx.Server.db.InsertDiveRecord(ctx.Request.Context(), ctx.PrincipalID, payload)
-		if err != nil {
-			writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		if ok {
-			inserted++
-		}
-		if id, _ := ctx.Server.db.GetDiveIDByUID(ctx.Request.Context(), ctx.PrincipalID, stringAny(payload["dive_uid"])); id != nil {
-			ids = append(ids, *id)
-		}
+	inserted, ids, err := ctx.Server.db.InsertDivesBatch(ctx.Request.Context(), ctx.PrincipalID, payloads)
+	if err != nil {
+		writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
 	}
 	summary = importSummary(rows, &inserted, ids)
 	writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusOK, map[string]any{"rows": len(rows), "inserted": inserted, "duplicates": summary["duplicates"], "ids": ids, "summary": summary})
+
 }
 
 func handleGeocodeSearch(ctx *Context) {
@@ -540,89 +522,15 @@ func handleBackupImport(ctx *Context) {
 		writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	profile := mapValue(payload["profile"])
-	if len(profile) > 0 {
-		if _, err := db.SaveUserProfile(ctx.Request.Context(), ctx.PrincipalID, profile); err != nil {
-			writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusServiceUnavailable, map[string]string{"error": "Database unavailable: " + err.Error()})
-			return
+	result, err := db.ImportBackupTransactional(ctx.Request.Context(), ctx.PrincipalID, payload)
+	if err != nil {
+		status := http.StatusBadRequest
+		if strings.Contains(strings.ToLower(err.Error()), "database") {
+			status = http.StatusServiceUnavailable
 		}
+		writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, status, map[string]string{"error": err.Error()})
+		return
 	}
-	equipmentImported := 0
-	if equipment, ok := payload["equipment"].([]any); ok {
-		if _, err := db.SaveEquipment(ctx.Request.Context(), ctx.PrincipalID, equipment); err != nil {
-			writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusServiceUnavailable, map[string]string{"error": "Database unavailable: " + err.Error()})
-			return
-		}
-		equipmentImported = len(equipment)
-	}
-	deviceStatesImported := 0
-	if states, ok := payload["device_states"].([]any); ok {
-		for _, state := range states {
-			item := mapValue(state)
-			vendor := stringAny(item["vendor"])
-			product := stringAny(item["product"])
-			if vendor == "" || product == "" {
-				writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusBadRequest, map[string]string{"error": "Backup device state is missing vendor or product"})
-				return
-			}
-			fingerprint := nullableStringAny(item["fingerprint_hex"])
-			if err := db.SaveDeviceState(ctx.Request.Context(), ctx.PrincipalID, vendor, product, fingerprint); err != nil {
-				writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusServiceUnavailable, map[string]string{"error": "Database unavailable: " + err.Error()})
-				return
-			}
-			deviceStatesImported++
-		}
-	}
-	inserted := 0
-	if dives, ok := payload["dives"].([]any); ok {
-		for _, dive := range dives {
-			itemBytes, err := json.Marshal(dive)
-			if err != nil {
-				writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusBadRequest, map[string]string{"error": "Backup dive must be a JSON object"})
-				return
-			}
-			var item map[string]any
-			if err := json.Unmarshal(itemBytes, &item); err != nil {
-				writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusBadRequest, map[string]string{"error": "Backup dive must be a JSON object"})
-				return
-			}
-			ok, err := db.InsertDiveRecord(ctx.Request.Context(), ctx.PrincipalID, item)
-			if err != nil {
-				writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusBadRequest, map[string]string{"error": err.Error()})
-				return
-			}
-			if ok {
-				inserted++
-			}
-		}
-	}
-	licenseDocumentsImported := 0
-	if documents, ok := payload["license_documents"].([]any); ok {
-		for _, document := range documents {
-			item := mapValue(document)
-			licenseID := stringAny(item["license_id"])
-			dataB64 := stringAny(item["data_b64"])
-			if licenseID == "" || dataB64 == "" {
-				continue
-			}
-			filename, contentType, data, err := decodePDFPayload(stringAny(item["filename"]), defaultString(stringAny(item["content_type"]), "application/pdf"), dataB64)
-			if err != nil {
-				writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusBadRequest, map[string]string{"error": err.Error()})
-				return
-			}
-			profile, err := db.SaveProfileLicensePDF(ctx.Request.Context(), ctx.PrincipalID, licenseID, filename, contentType, data)
-			if err != nil {
-				writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusServiceUnavailable, map[string]string{"error": "Database unavailable: " + err.Error()})
-				return
-			}
-			if profile == nil {
-				writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusBadRequest, map[string]string{"error": "License " + licenseID + " does not exist in the imported profile"})
-				return
-			}
-			licenseDocumentsImported++
-		}
-	}
-	result := map[string]any{"summary": map[string]any{"dives_in_backup": len(sliceValue(payload["dives"])), "dives_inserted": inserted, "device_states_imported": deviceStatesImported, "equipment_imported": equipmentImported, "license_documents_imported": licenseDocumentsImported}}
 	writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusOK, result)
 }
 

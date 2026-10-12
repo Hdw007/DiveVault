@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -207,12 +208,22 @@ func handleAuthLogin(ctx *Context) {
 		writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusServiceUnavailable, map[string]string{"error": "Database unavailable: " + err.Error()})
 		return
 	}
-	user, err := db.GetAuthUserByEmail(ctx.Request.Context(), payload.Email)
+	cleanEmail := strings.ToLower(strings.TrimSpace(payload.Email))
+	failKey := "auth_login_fail:" + cleanEmail
+	// Check if this account has failed 5 times in 5 minutes
+	allowed, retryAfter := ctx.Server.allowRateLimit(ctx.Request.Context(), failKey, 5, 300)
+	if !allowed {
+		ctx.ResponseWriter.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+		writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusTooManyRequests, map[string]string{"error": "Too many failed login attempts for this account. Please retry later."})
+		return
+	}
+	user, err := db.GetAuthUserByEmail(ctx.Request.Context(), cleanEmail)
 	if err != nil {
 		writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusServiceUnavailable, map[string]string{"error": "Database unavailable: " + err.Error()})
 		return
 	}
 	if user == nil || !auth.VerifyPassword(payload.Password, user.PasswordHash) {
+		_, _ = ctx.Server.allowRateLimit(ctx.Request.Context(), failKey, 5, 300)
 		writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusUnauthorized, map[string]string{"error": "Invalid email or password"})
 		return
 	}
@@ -220,12 +231,14 @@ func handleAuthLogin(ctx *Context) {
 		writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusForbidden, map[string]string{"error": "User account is inactive"})
 		return
 	}
+	_ = db.ResetRateLimit(ctx.Request.Context(), failKey)
 	_ = db.UpdateAuthUserLastLogin(ctx.Request.Context(), user.ID)
 	token, err := auth.IssueSessionToken(user.ID, user.Email, user.Role, ctx.Server.cfg.AuthJWTSecret, ctx.Server.cfg.AuthJWTIssuer, ctx.Server.cfg.AuthJWTAudience, ctx.Server.cfg.AuthTokenTTLSeconds)
 	if err != nil {
 		writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusInternalServerError, map[string]string{"error": "Session token creation failed"})
 		return
 	}
+	setSessionCookie(ctx.ResponseWriter, ctx.Request, token, ctx.Server.cfg.AuthTokenTTLSeconds)
 	writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusOK, map[string]string{"token": token})
 }
 
@@ -445,73 +458,6 @@ func handleUserDelete(ctx *Context) {
 	writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusOK, map[string]any{"deleted": true, "user_id": userID})
 }
 
-func handleCLIAuthRequestPost(ctx *Context) {
-	db, err := ctx.Server.requireDB()
-	if err != nil {
-		writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusServiceUnavailable, map[string]string{"error": "Database unavailable: " + err.Error()})
-		return
-	}
-	entry, err := db.CreateCLIAuthRequest(ctx.Request.Context(), randomURLToken(24), ctx.Server.cfg.CLIAuthRequestTTL, time.Now().Unix())
-	if err != nil {
-		writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusServiceUnavailable, map[string]string{"error": "Database unavailable: " + err.Error()})
-		return
-	}
-	writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusCreated, entry)
-}
-
-func handleCLIAuthRequestGet(ctx *Context) {
-	code := ctx.Request.URL.Query().Get("code")
-	if code == "" {
-		writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusBadRequest, map[string]string{"error": "Missing code query parameter"})
-		return
-	}
-	db, err := ctx.Server.requireDB()
-	if err != nil {
-		writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusServiceUnavailable, map[string]string{"error": "Database unavailable: " + err.Error()})
-		return
-	}
-	entry, err := db.GetCLIAuthRequestStatus(ctx.Request.Context(), code, time.Now().Unix())
-	if err != nil {
-		writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusServiceUnavailable, map[string]string{"error": "Database unavailable: " + err.Error()})
-		return
-	}
-	if entry == nil {
-		writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusNotFound, map[string]string{"error": "CLI auth request not found or expired"})
-		return
-	}
-	writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusOK, entry)
-}
-
-func handleCLIAuthApprovePost(ctx *Context) {
-	var payload struct {
-		Code string `json:"code"`
-	}
-	if err := readJSON(ctx.Request, &payload); err != nil {
-		writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
-		return
-	}
-	payload.Code = strings.TrimSpace(payload.Code)
-	if payload.Code == "" {
-		writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusBadRequest, map[string]string{"error": "Missing CLI auth code"})
-		return
-	}
-	db, err := ctx.Server.requireDB()
-	if err != nil {
-		writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusServiceUnavailable, map[string]string{"error": "Database unavailable: " + err.Error()})
-		return
-	}
-	entry, err := db.ApproveCLIAuthRequest(ctx.Request.Context(), payload.Code, map[string]any(ctx.Claims), "dvsync_"+randomURLToken(32), ctx.Server.cfg.CLIAuthTokenTTL, time.Now().Unix())
-	if err != nil {
-		writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusServiceUnavailable, map[string]string{"error": "Database unavailable: " + err.Error()})
-		return
-	}
-	if entry == nil {
-		writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusNotFound, map[string]string{"error": "CLI auth request not found or expired"})
-		return
-	}
-	writeJSON(ctx.ResponseWriter, ctx.Server.cfg.CORSOrigin, http.StatusOK, map[string]any{"status": entry.Status, "email": entry.Email, "token_expires_at": entry.TokenExpiresAt})
-}
-
 func normalizeUserRole(value string) string {
 	role := strings.ToLower(strings.TrimSpace(value))
 	if role == "" {
@@ -522,3 +468,18 @@ func normalizeUserRole(value string) string {
 	}
 	return role
 }
+
+func setSessionCookie(w http.ResponseWriter, r *http.Request, token string, maxAge int) {
+	secure := r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	cookie := &http.Cookie{
+		Name:     "__session",
+		Value:    token,
+		Path:     "/",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
+	}
+	http.SetCookie(w, cookie)
+}
+

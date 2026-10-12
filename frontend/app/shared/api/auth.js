@@ -1,16 +1,4 @@
-import { API_ENDPOINTS, authStatusUrl, cliAuthApproveUrl } from "./endpoints.js";
-
-export function approveCliAuth(api, payload) {
-  return api.request(
-    cliAuthApproveUrl(),
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    },
-    { requireAuth: false }
-  );
-}
+import { API_ENDPOINTS, authStatusUrl } from "./endpoints.js";
 
 export function fetchAuthSettings(api) {
   return api.request(API_ENDPOINTS.authSettings);

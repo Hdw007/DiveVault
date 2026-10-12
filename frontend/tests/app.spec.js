@@ -329,7 +329,7 @@ test("covers settings profile loading and public sharing updates", async ({ page
   await page.getByRole("button", { name: "Map", exact: true }).click();
   await expect(page.locator(".dive-theme-map.leaflet-container")).toBeVisible();
   await settingsRail.getByRole("button", { name: /Data Management/ }).click();
-  await expect(page.getByRole("heading", { name: "Exports And Desktop Sync" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Exports And Log Management" })).toBeVisible();
   await expect(page.getByRole("button", { name: /Import Dives \(CSV\)/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /Import Subsurface Export/ })).toBeVisible();
   await settingsRail.getByRole("button", { name: /Backup/ }).click();
