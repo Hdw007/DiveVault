@@ -29,3 +29,4 @@ frontend/test-results
 *.code-workspace
 .build-wasm/
 
+aladin_reverse_engineering/
